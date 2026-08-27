@@ -1,15 +1,16 @@
 import asyncio
-import sys
 from dataclasses import dataclass
 from urllib.parse import quote
 
 from parsek_cdp import Browser, ElementState, Page
+from utils import normalize_text, print_cards, read_query
 
+BROWSER_PORT: int = 51111
+CAPTCHA_TIMEOUT_SECONDS = 300
 CARD_SELECTOR = '[data-test="product-item"][data-list-id="main"]'
 TITLE_SELECTOR = '[data-test="product-name-link"]'
 PRICE_SELECTOR = '[data-test="product-price"]'
 SELLER_SELECTOR = '[data-test="merchant-name"]'
-CAPTCHA_TIMEOUT_SECONDS = 300
 NOT_FOUND_SELECTOR = ".listing-not-found-block"
 PAGE_READY_SELECTOR = f"{CARD_SELECTOR}, {NOT_FOUND_SELECTOR}"
 
@@ -21,22 +22,8 @@ class CardToPars:
     seller: str
 
 
-async def connect_browser(proxy: str | None, port: int) -> Browser:
+async def connect_browser(port: int) -> Browser:
     return await Browser.connect_http(f"http://127.0.0.1:{port}")
-
-
-def normalize_text(value: str) -> str:
-    return " ".join(value.split())
-
-
-def read_query() -> str:
-    print("Поисковый запрос: ", end="", flush=True)
-    raw_query = sys.stdin.buffer.readline().rstrip(b"\r\n")
-
-    try:
-        return raw_query.decode("utf-8")
-    except UnicodeDecodeError:
-        return raw_query.decode("cp1251")
 
 
 def build_catalog_url(query: str, page_number: int) -> str:
@@ -92,18 +79,8 @@ async def is_not_found_page(page: Page) -> bool:
     )
 
 
-def print_cards(cards: list[CardToPars]) -> None:
-    print(f"Собрано карточек: {len(cards)}")
-    for number, card in enumerate(cards, start=1):
-        print(
-            f"{number}. {card.title}\n"
-            f"   Цена: {card.price}\n"
-            f"   Продавец: {card.seller}"
-        )
-
-
 async def main() -> None:
-    browser = await connect_browser(None, 51111)
+    browser = await connect_browser(BROWSER_PORT)
     try:
         page = await browser.new_page()
         query = read_query()
