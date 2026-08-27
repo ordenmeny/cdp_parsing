@@ -212,14 +212,6 @@ function () {
         self._visits = 0
 
     @property
-    def seller_links(self) -> dict[str, str]:
-        return dict(self._seller_links)
-
-    @property
-    def visits(self) -> int:
-        return self._visits
-
-    @property
     def _page_ready_selector(self) -> str:
         return f"{self.MERCHANT_LINK_SELECTOR}, {self.MERCHANT_NAME_SELECTOR}"
 

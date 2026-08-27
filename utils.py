@@ -1,4 +1,3 @@
-import sys
 from collections.abc import Sequence
 from typing import Protocol
 
@@ -16,13 +15,7 @@ def normalize_text(value: str) -> str:
 
 
 def read_query() -> str:
-    print("Поисковый запрос: ", end="", flush=True)
-    raw_query = sys.stdin.buffer.readline().rstrip(b"\r\n")
-
-    try:
-        return raw_query.decode("utf-8")
-    except UnicodeDecodeError:
-        return raw_query.decode("cp1251")
+    return input("Поисковый запрос: ").strip()
 
 
 def print_cards(cards: Sequence[_Card]) -> None:
