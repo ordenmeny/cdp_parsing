@@ -7,3 +7,4 @@ class CardToPars:
     price: str
     seller: str
     card_link: str
+    seller_link: str = ""

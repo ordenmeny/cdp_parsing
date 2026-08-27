@@ -8,6 +8,7 @@ class _Card(Protocol):
     price: str
     seller: str
     card_link: str
+    seller_link: str
 
 
 def normalize_text(value: str) -> str:
@@ -31,5 +32,6 @@ def print_cards(cards: Sequence[_Card]) -> None:
             f"{number}. {card.title}\n"
             f"   Цена: {card.price}\n"
             f"   Продавец: {card.seller}\n"
-            f"   Ссылка на карточку: {card.card_link}"
+            f"   Ссылка на карточку: {card.card_link}\n"
+            f"   Ссылка на продавца: {card.seller_link or '—'}"
         )
