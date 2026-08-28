@@ -1,3 +1,4 @@
+import asyncio
 import json
 from collections.abc import Sequence
 from urllib.parse import parse_qs, quote, urljoin, urlsplit
@@ -6,6 +7,15 @@ from parsek_cdp import Element, ElementState, Page, ProtocolError
 
 from domain import CardToPars
 from utils import normalize_text
+
+# Вместо страницы сайт может отдать заглушку «запросы похожи на автоматические».
+# Такого id на обычных страницах нет, поэтому он и служит признаком.
+BLOCKED_SELECTOR = "#request-id"
+BLOCKED_MESSAGE = "Сайт решил, что запросы автоматические."
+
+
+class SiteBlocked(Exception):
+    """Вместо страницы пришла заглушка про автоматические запросы."""
 
 
 class MegamarketParser:
@@ -23,15 +33,17 @@ class MegamarketParser:
             number_pages: int | None = None,
             number_items: int | None = None,
             captcha_timeout: float = 300,
+            page_delay: float = 2,
     ) -> None:
         self.page = page
         self.number_pages = number_pages
         self.number_items = number_items
         self.captcha_timeout = captcha_timeout
+        self.page_delay = page_delay
 
     @property
     def _page_ready_selector(self) -> str:
-        return f"{self.CARD_SELECTOR}, {self.NOT_FOUND_SELECTOR}"
+        return f"{self.CARD_SELECTOR}, {self.NOT_FOUND_SELECTOR}, {BLOCKED_SELECTOR}"
 
     @classmethod
     def _build_catalog_url(cls, query: str, page_number: int) -> str:
@@ -69,12 +81,6 @@ class MegamarketParser:
     async def _parse_cards(self) -> list[CardToPars]:
         print("Начинаем парсить...")
 
-        await self.page.wait_for_selector(
-            self.CARD_SELECTOR,
-            state=ElementState.ATTACHED,
-            timeout=self.captcha_timeout,
-        )
-
         cards: list[CardToPars] = []
         async with self.page.domain_enabled(self.page.cdp.DOM):
             selected_cards = await self.page.select_all(self.CARD_SELECTOR)
@@ -82,23 +88,32 @@ class MegamarketParser:
                 selected_cards = selected_cards[: self.number_items]
 
             for card_element in selected_cards:
+                price = await self._get_text(card_element, self.PRICE_SELECTOR)
                 card = CardToPars(
                     title=await self._get_text(card_element, self.TITLE_SELECTOR),
-                    price=await self._get_text(card_element, self.PRICE_SELECTOR),
+                    price=price,
                     seller=await self._get_text(card_element, self.SELLER_SELECTOR),
                     card_link=await self._get_card_link(card_element),
+                    # цену показывают только у того, что можно купить
+                    in_stock=bool(price),
                 )
-                if card.title and card.price and card.seller and card.card_link:
+                # цену не требуем: карточка без неё — это товар не в наличии
+                if card.title and card.seller and card.card_link:
                     cards.append(card)
 
         return cards
 
-    async def _is_not_found_page(self) -> bool:
+    async def _wait_page_ready(self) -> None:
         await self.page.wait_for_selector(
             self._page_ready_selector,
             state=ElementState.ATTACHED,
             timeout=self.captcha_timeout,
         )
+
+    async def _is_blocked(self) -> bool:
+        return await self.page.select(selector=BLOCKED_SELECTOR) is not None
+
+    async def _is_not_found_page(self) -> bool:
         return (
                 await self.page.select(selector=self.NOT_FOUND_SELECTOR) is not None
         )
@@ -108,9 +123,28 @@ class MegamarketParser:
         page_number = 1
 
         while self.number_pages is None or page_number <= self.number_pages:
+            if page_number > 1:
+                await asyncio.sleep(self.page_delay)
+
             url = self._build_catalog_url(query, page_number)
             print(f"Переходим на страницу {page_number}: {url}")
             await self.page.navigate(url)
+
+            try:
+                await self._wait_page_ready()
+            except TimeoutError:
+                print(
+                    f"Страница {page_number} не открылась. "
+                    f"Отдаём собранное, карточек: {len(all_cards)}."
+                )
+                break
+
+            if await self._is_blocked():
+                print(
+                    f"{BLOCKED_MESSAGE} "
+                    f"Отдаём собранное, карточек: {len(all_cards)}."
+                )
+                break
 
             if await self._is_not_found_page():
                 print(
@@ -203,17 +237,22 @@ function () {
             number_visits: int | None = None,
             captcha_timeout: float = 300,
             popover_timeout: float = 10,
+            card_delay: float = 2,
     ) -> None:
         self.page = page
         self.number_visits = number_visits
         self.captcha_timeout = captcha_timeout
         self.popover_timeout = popover_timeout
+        self.card_delay = card_delay
         self._seller_links: dict[str, str] = {}
         self._visits = 0
 
     @property
     def _page_ready_selector(self) -> str:
-        return f"{self.MERCHANT_LINK_SELECTOR}, {self.MERCHANT_NAME_SELECTOR}"
+        return (
+            f"{self.MERCHANT_LINK_SELECTOR}, {self.MERCHANT_NAME_SELECTOR}, "
+            f"{BLOCKED_SELECTOR}"
+        )
 
     @staticmethod
     def _merchant_id(card_link: str) -> str:
@@ -327,6 +366,9 @@ function () {
             print(f"Карточка не открылась: {card.card_link}")
             return ""
 
+        if await self.page.select(selector=BLOCKED_SELECTOR) is not None:
+            raise SiteBlocked(BLOCKED_MESSAGE)
+
         async with self.page.domain_enabled(self.page.cdp.DOM):
             # в витрине продавца ссылка лежит прямо в шапке, кликать нечего
             shop_link = await self._first_shop_link(self.MERCHANT_LINK_SELECTOR)
@@ -365,8 +407,18 @@ function () {
                 )
                 continue
 
+            if self._visits:
+                await asyncio.sleep(self.card_delay)
+
             self._visits += 1
-            shop_link = await self._parse_seller_link(card)
+            try:
+                shop_link = await self._parse_seller_link(card)
+            except SiteBlocked:
+                print(
+                    f"{BLOCKED_MESSAGE} Отдаём собранное, "
+                    f"продавцов найдено: {len(self._seller_links)}."
+                )
+                break
             self._seller_links[key] = shop_link
             card.seller_link = shop_link
 
