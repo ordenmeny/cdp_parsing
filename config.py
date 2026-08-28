@@ -22,8 +22,8 @@ class Settings(BaseSettings):
     browser_port: int = 51111
 
     # Сколько собирать. None — пока сайт отдаёт результаты.
-    number_pages: int | None = None  # страниц выдачи
-    number_items: int | None = None  # карточек с одной страницы
+    number_pages: int | None = 3  # страниц выдачи
+    number_items: int | None = 4  # карточек с одной страницы
     number_visits: int | None = None  # заходов в карточки за продавцами
 
     captcha_timeout: int = 300

@@ -2,11 +2,12 @@ import asyncio
 
 from parsek_cdp import Browser
 
+import utils
 from config import settings
 from domain import CardToPars
-from parsing import MegamarketCardParser, MegamarketParsePage
+from parsing import MegamarketParsePage
 from report import ExcelReport
-from utils import print_cards, read_query
+from utils import print_cards
 
 
 async def connect_browser(endpoint: str) -> Browser:
@@ -17,12 +18,10 @@ async def main() -> None:
     browser = await connect_browser(settings.browser_endpoint)
     try:
         page = await browser.new_page()
-        query = read_query()
-        parser = MegamarketParsePage(page)
-        cards = await parser.parse(query)
 
-        # card_parser = MegamarketCardParser(page)
-        # cards = await card_parser.parse(cards)
+        parser = MegamarketParsePage(page)
+        query = utils.read_query()
+        cards = await parser.parse(query)
 
         print_cards(cards)
         ExcelReport(cards, model=CardToPars, query=query).save()
