@@ -2,37 +2,30 @@ import asyncio
 
 from parsek_cdp import Browser
 
-from parsing import MegamarketCardParser, MegamarketParser
+from config import settings
+from domain import CardToPars
+from parsing import MegamarketCardParser, MegamarketParsePage
 from report import ExcelReport
 from utils import print_cards, read_query
 
-BROWSER_PORT: int = 51111
 
-
-async def connect_browser(port: int) -> Browser:
-    return await Browser.connect_http(f"http://127.0.0.1:{port}")
+async def connect_browser(endpoint: str) -> Browser:
+    return await Browser.connect_http(endpoint)
 
 
 async def main() -> None:
-    browser = await connect_browser(BROWSER_PORT)
+    browser = await connect_browser(settings.browser_endpoint)
     try:
         page = await browser.new_page()
         query = read_query()
-        number_pages: int | None = None
-        number_items: int | None = None
-        number_visits: int | None = None
-        parser = MegamarketParser(
-            page,
-            number_pages=number_pages,
-            number_items=number_items,
-        )
+        parser = MegamarketParsePage(page)
         cards = await parser.parse(query)
 
-        # card_parser = MegamarketCardParser(page, number_visits=number_visits)
+        # card_parser = MegamarketCardParser(page)
         # cards = await card_parser.parse(cards)
 
         print_cards(cards)
-        ExcelReport(cards, query=query).save()
+        ExcelReport(cards, model=CardToPars, query=query).save()
     finally:
         pass
 

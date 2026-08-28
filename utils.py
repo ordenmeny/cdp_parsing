@@ -1,14 +1,6 @@
 from collections.abc import Sequence
-from typing import Protocol
 
-
-class _Card(Protocol):
-    title: str
-    price: str
-    seller: str
-    card_link: str
-    in_stock: bool
-    seller_link: str
+from pydantic import BaseModel
 
 
 def normalize_text(value: str) -> str:
@@ -19,14 +11,11 @@ def read_query() -> str:
     return input("Поисковый запрос: ").strip()
 
 
-def print_cards(cards: Sequence[_Card]) -> None:
+def print_cards(cards: Sequence[BaseModel]) -> None:
+    """Печатает поля модели в порядке объявления, первое — в строке с номером."""
     print(f"Собрано карточек: {len(cards)}")
     for number, card in enumerate(cards, start=1):
-        print(
-            f"{number}. {card.title}\n"
-            f"   Цена: {card.price}\n"
-            f"   В наличии: {'да' if card.in_stock else 'нет'}\n"
-            f"   Продавец: {card.seller}\n"
-            f"   Ссылка на карточку: {card.card_link}\n"
-            f"   Ссылка на продавца: {card.seller_link or '—'}"
-        )
+        (first, _), *rest = type(card).model_fields.items()
+        print(f"{number}. {getattr(card, first)}")
+        for name, field in rest:
+            print(f"   {field.title or name}: {getattr(card, name) or '—'}")

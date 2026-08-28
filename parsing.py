@@ -1,11 +1,13 @@
 import asyncio
 import json
 from collections.abc import Sequence
-from urllib.parse import parse_qs, quote, urljoin, urlsplit
+from urllib.parse import parse_qs, quote, urljoin, urlsplit, urlunsplit
 
 from parsek_cdp import Element, ElementState, Page, ProtocolError
 
-from domain import CardToPars
+from base_parser import BasePaginatedParser, PageState
+from config import settings
+from domain import CardToPars, Stock
 from exceptions import SiteBlocked
 from utils import normalize_text
 
@@ -33,37 +35,61 @@ async def is_blocked_page(page: Page) -> bool:
     return BLOCKED_HEADING in normalize_text(heading or "").casefold()
 
 
-class MegamarketParser:
-    BASE_URL = "https://megamarket.ru"
+class MegamarketParsePage(BasePaginatedParser[CardToPars]):
     CARD_SELECTOR = '[data-test="product-item"][data-list-id="main"]'
     TITLE_SELECTOR = '[data-test="product-name-link"]'
     PRICE_SELECTOR = '[data-test="product-price"]'
     SELLER_SELECTOR = '[data-test="merchant-name"]'
     NOT_FOUND_SELECTOR = ".listing-not-found-block"
 
+    # После loadEventFired сайт продолжает добавлять карточки через JS. Считаем
+    # список готовым, когда его длина несколько проверок подряд не меняется.
+    CARDS_LOAD_TIMEOUT = 30.0
+    CARDS_POLL_INTERVAL = 0.5
+    CARDS_STABLE_CHECKS = 3
+
     def __init__(
             self,
             page: Page,
             *,
-            number_pages: int | None = None,
-            number_items: int | None = None,
-            captcha_timeout: float = 300,
-            page_delay: float = 2,
+            number_pages: int | None = settings.number_pages,
+            number_items: int | None = settings.number_items,
+            captcha_timeout: float = settings.captcha_timeout,
+            page_delay: float = settings.page_delay,
+            cards_load_timeout: float = CARDS_LOAD_TIMEOUT,
+            cards_poll_interval: float = CARDS_POLL_INTERVAL,
+            cards_stable_checks: int = CARDS_STABLE_CHECKS,
     ) -> None:
-        self.page = page
-        self.number_pages = number_pages
+        super().__init__(
+            page,
+            number_pages=number_pages,
+            page_delay=page_delay,
+            navigation_timeout=captcha_timeout,
+        )
         self.number_items = number_items
         self.captcha_timeout = captcha_timeout
-        self.page_delay = page_delay
+        self.cards_load_timeout = cards_load_timeout
+        self.cards_poll_interval = cards_poll_interval
+        self.cards_stable_checks = cards_stable_checks
 
     @property
     def _page_ready_selector(self) -> str:
         return f"{self.CARD_SELECTOR}, {self.NOT_FOUND_SELECTOR}, {BLOCKED_SELECTOR}"
 
-    @classmethod
-    def _build_catalog_url(cls, query: str, page_number: int) -> str:
-        path = "/catalog/" if page_number == 1 else f"/catalog/page-{page_number}/"
-        return f"{cls.BASE_URL}{path}?q={quote(query)}"
+    def build_search_url(self, query: str) -> str:
+        return f"{settings.base_url}/catalog/?q={quote(query)}"
+
+    def build_page_url(self, search_url: str, page_number: int) -> str:
+        """Ссылка на страницу N там, куда привёл поиск.
+
+        Поиск по запросу может остаться на /catalog/?q=..., а может увести на
+        страницу категории /catalog/iphone-16/#?related_search=... — листать
+        надо то, где оказались. Разбивка в обоих случаях одна: page-N/ в конце
+        пути, остальное от адреса не меняется.
+        """
+        parts = urlsplit(search_url)
+        path = f"{parts.path.rstrip('/')}/page-{page_number}/"
+        return urlunsplit((parts.scheme, parts.netloc, path, parts.query, parts.fragment))
 
     @staticmethod
     async def _get_text(element: Element, selector: str) -> str:
@@ -91,17 +117,31 @@ class MegamarketParser:
             cls.TITLE_SELECTOR,
             "href",
         )
-        return urljoin(cls.BASE_URL, href) if href else ""
+        return urljoin(settings.base_url, href) if href else ""
 
-    async def _parse_cards(self) -> list[CardToPars]:
-        print("Начинаем парсить...")
+    async def _parse_card(self, card_element: Element) -> CardToPars | None:
+        card_link = await self._get_card_link(card_element)
+        if not card_link:
+            return None
 
-        await self.page.wait_for_selector(
-            self.CARD_SELECTOR,
-            state=ElementState.ATTACHED,
-            timeout=self.captcha_timeout,
+        price = await self._get_text(card_element, self.PRICE_SELECTOR)
+        card = CardToPars(
+            title=await self._get_text(card_element, self.TITLE_SELECTOR),
+            price=price,
+            seller=await self._get_text(card_element, self.SELLER_SELECTOR),
+            card_link=card_link,
+            # цену показывают только у того, что можно купить
+            stock=Stock.IN_STOCK if price else Stock.OUT_OF_STOCK,
         )
+        # цену не требуем: карточка без неё — это товар не в наличии
+        if not (card.title and card.seller):
+            return None
 
+        return card
+
+    async def parse_current_page(self) -> list[CardToPars]:
+        """Разобрать все карточки открытой страницы выдачи."""
+        print("Начинаем парсить страницу...")
         cards: list[CardToPars] = []
         async with self.page.domain_enabled(self.page.cdp.DOM):
             selected_cards = await self.page.select_all(self.CARD_SELECTOR)
@@ -109,27 +149,24 @@ class MegamarketParser:
                 selected_cards = selected_cards[: self.number_items]
 
             for card_element in selected_cards:
-                price = await self._get_text(card_element, self.PRICE_SELECTOR)
-                card = CardToPars(
-                    title=await self._get_text(card_element, self.TITLE_SELECTOR),
-                    price=price,
-                    seller=await self._get_text(card_element, self.SELLER_SELECTOR),
-                    card_link=await self._get_card_link(card_element),
-                    # цену показывают только у того, что можно купить
-                    in_stock=bool(price),
-                )
-                # цену не требуем: карточка без неё — это товар не в наличии
-                if card.title and card.seller and card.card_link:
+                card = await self._parse_card(card_element)
+                if card is not None:
                     cards.append(card)
 
         return cards
 
-    async def _wait_page_ready(self) -> None:
+    async def wait_page_state(self) -> PageState:
         await self.page.wait_for_selector(
             self._page_ready_selector,
             state=ElementState.ATTACHED,
             timeout=self.captcha_timeout,
         )
+
+        if await self._is_blocked():
+            return PageState.BLOCKED
+        if await self._is_not_found_page():
+            return PageState.NOT_FOUND
+        return PageState.READY
 
     async def _is_blocked(self) -> bool:
         return await is_blocked_page(self.page)
@@ -139,59 +176,40 @@ class MegamarketParser:
                 await self.page.select(selector=self.NOT_FOUND_SELECTOR) is not None
         )
 
-    async def parse(self, query: str) -> list[CardToPars]:
-        all_cards: list[CardToPars] = []
-        page_number = 1
+    async def _card_count(self) -> int:
+        return len(await self.page.select_all(self.CARD_SELECTOR))
 
-        while self.number_pages is None or page_number <= self.number_pages:
-            if page_number > 1:
-                await asyncio.sleep(self.page_delay)
+    async def wait_content_ready(self) -> None:
+        """Дождаться стабилизации числа карточек открытой страницы."""
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self.cards_load_timeout
+        last_count = -1
+        stable_checks = 0
 
-            url = self._build_catalog_url(query, page_number)
-            print(f"Переходим на страницу {page_number}: {url}")
-            await self.page.navigate(url)
-
+        while True:
             try:
-                await self._wait_page_ready()
-            except TimeoutError:
-                print(
-                    f"Страница {page_number} не открылась. "
-                    f"Отдаём собранное, карточек: {len(all_cards)}."
-                )
-                break
+                current_count = await self._card_count()
+            except ProtocolError:
+                current_count = -1
 
-            if await self._is_blocked():
-                print(
-                    f"{BLOCKED_MESSAGE} "
-                    f"Отдаём собранное, карточек: {len(all_cards)}."
-                )
-                break
+            if current_count > 0:
+                if current_count == last_count:
+                    stable_checks += 1
+                else:
+                    stable_checks = 1
+                if stable_checks >= self.cards_stable_checks:
+                    return
+            else:
+                stable_checks = 0
 
-            if await self._is_not_found_page():
-                print(
-                    f"Страница {page_number} не содержит результатов. "
-                    "Останавливаемся."
-                )
-                break
+            if loop.time() >= deadline:
+                return
 
-            try:
-                page_cards = await self._parse_cards()
-            except ProtocolError as error:
-                print(
-                    f"Страница {page_number} перерисовалась во время разбора: {error}. "
-                    f"Отдаём собранное, карточек: {len(all_cards)}."
-                )
-                break
+            last_count = current_count
+            await asyncio.sleep(self.cards_poll_interval)
 
-            print(f"На странице {page_number} собрано карточек: {len(page_cards)}")
-            all_cards.extend(page_cards)
-
-            if self.number_pages is not None and page_number >= self.number_pages:
-                break
-
-            page_number += 1
-
-        return all_cards
+    def item_key(self, item: CardToPars) -> str:
+        return item.card_link
 
 
 class MegamarketCardParser:
@@ -203,7 +221,6 @@ class MegamarketCardParser:
     его карточкам проставляем уже найденную ссылку.
     """
 
-    BASE_URL = "https://megamarket.ru"
     BLANK_URL = "about:blank"
     SHOP_PATH = "/shop/"
 
@@ -263,10 +280,10 @@ function () {
             self,
             page: Page,
             *,
-            number_visits: int | None = None,
-            captcha_timeout: float = 300,
-            popover_timeout: float = 10,
-            card_delay: float = 2,
+            number_visits: int | None = settings.number_visits,
+            captcha_timeout: float = settings.captcha_timeout,
+            popover_timeout: float = settings.popover_timeout,
+            card_delay: float = settings.card_delay,
     ) -> None:
         self.page = page
         self.number_visits = number_visits
@@ -305,11 +322,11 @@ function () {
         """Оставить от ссылки только корень магазина, чужие ссылки отбросить."""
         if not href:
             return ""
-        path = urlsplit(urljoin(cls.BASE_URL, href)).path
+        path = urlsplit(urljoin(settings.base_url, href)).path
         if not path.startswith(cls.SHOP_PATH):
             return ""
         slug = path[len(cls.SHOP_PATH):].strip("/").split("/")[0]
-        return f"{cls.BASE_URL}{cls.SHOP_PATH}{slug}/" if slug else ""
+        return f"{settings.base_url}{cls.SHOP_PATH}{slug}/" if slug else ""
 
     async def _first_shop_link(self, selector: str) -> str:
         for element in await self.page.select_all(selector):
