@@ -3,6 +3,7 @@ import asyncio
 from parsek_cdp import Browser
 
 from parsing import MegamarketCardParser, MegamarketParser
+from report import ExcelReport
 from utils import print_cards, read_query
 
 BROWSER_PORT: int = 51111
@@ -17,8 +18,8 @@ async def main() -> None:
     try:
         page = await browser.new_page()
         query = read_query()
-        number_pages: int | None = 3
-        number_items: int | None = 2
+        number_pages: int | None = None
+        number_items: int | None = None
         number_visits: int | None = None
         parser = MegamarketParser(
             page,
@@ -27,10 +28,11 @@ async def main() -> None:
         )
         cards = await parser.parse(query)
 
-        card_parser = MegamarketCardParser(page, number_visits=number_visits)
-        cards = await card_parser.parse(cards)
+        # card_parser = MegamarketCardParser(page, number_visits=number_visits)
+        # cards = await card_parser.parse(cards)
 
         print_cards(cards)
+        ExcelReport(cards, query=query).save()
     finally:
         pass
 

@@ -6,16 +6,31 @@ from urllib.parse import parse_qs, quote, urljoin, urlsplit
 from parsek_cdp import Element, ElementState, Page, ProtocolError
 
 from domain import CardToPars
+from exceptions import SiteBlocked
 from utils import normalize_text
 
 # Вместо страницы сайт может отдать заглушку «запросы похожи на автоматические».
-# Такого id на обычных страницах нет, поэтому он и служит признаком.
+# Узнаём её по заголовку: он говорит об этом прямым текстом. Разметку заглушки
+# для этого не используем — id ниже нужен только чтобы не ждать её впустую.
+BLOCKED_HEADING = "запросы с вашего устройства похожи на автоматические"
 BLOCKED_SELECTOR = "#request-id"
 BLOCKED_MESSAGE = "Сайт решил, что запросы автоматические."
 
 
-class SiteBlocked(Exception):
-    """Вместо страницы пришла заглушка про автоматические запросы."""
+async def is_blocked_page(page: Page) -> bool:
+    """Отдал ли сайт заглушку вместо страницы.
+
+    Заголовок читаем одним ``evaluate``, а не через элемент: между поиском
+    элемента и чтением его текста включается и выключается домен DOM, из-за
+    чего id узла успевает устареть.
+    """
+    try:
+        heading = await page.evaluate(
+            "(document.querySelector('h1') || {}).textContent || ''"
+        )
+    except ProtocolError:
+        return False
+    return BLOCKED_HEADING in normalize_text(heading or "").casefold()
 
 
 class MegamarketParser:
@@ -81,6 +96,12 @@ class MegamarketParser:
     async def _parse_cards(self) -> list[CardToPars]:
         print("Начинаем парсить...")
 
+        await self.page.wait_for_selector(
+            self.CARD_SELECTOR,
+            state=ElementState.ATTACHED,
+            timeout=self.captcha_timeout,
+        )
+
         cards: list[CardToPars] = []
         async with self.page.domain_enabled(self.page.cdp.DOM):
             selected_cards = await self.page.select_all(self.CARD_SELECTOR)
@@ -111,7 +132,7 @@ class MegamarketParser:
         )
 
     async def _is_blocked(self) -> bool:
-        return await self.page.select(selector=BLOCKED_SELECTOR) is not None
+        return await is_blocked_page(self.page)
 
     async def _is_not_found_page(self) -> bool:
         return (
@@ -153,7 +174,15 @@ class MegamarketParser:
                 )
                 break
 
-            page_cards = await self._parse_cards()
+            try:
+                page_cards = await self._parse_cards()
+            except ProtocolError as error:
+                print(
+                    f"Страница {page_number} перерисовалась во время разбора: {error}. "
+                    f"Отдаём собранное, карточек: {len(all_cards)}."
+                )
+                break
+
             print(f"На странице {page_number} собрано карточек: {len(page_cards)}")
             all_cards.extend(page_cards)
 
@@ -366,7 +395,7 @@ function () {
             print(f"Карточка не открылась: {card.card_link}")
             return ""
 
-        if await self.page.select(selector=BLOCKED_SELECTOR) is not None:
+        if await is_blocked_page(self.page):
             raise SiteBlocked(BLOCKED_MESSAGE)
 
         async with self.page.domain_enabled(self.page.cdp.DOM):
