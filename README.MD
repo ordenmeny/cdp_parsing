@@ -1,70 +1,126 @@
 # Парсер товаров Megamarket
 
-## 1. Получение проекта
+Программа подключается к Google Chrome, собирает товары из поисковой выдачи
+Megamarket и сохраняет результат в Excel.
 
-```bash
-git clone git@gitlab.bpg.team:developer/parsers/unusualparsers/megamarketru_parsek_cdp.git
-cd megamarketru_parsek_cdp
+Все команды нужно выполнять в PowerShell.
+
+## 1. Распаковать архив
+
+Распакуйте ZIP-архив с программой в удобный каталог. В пути к каталогу не
+должно быть кириллицы.
+
+## 2. Открыть каталог проекта
+
+Откройте PowerShell и перейдите в распакованный каталог, содержащий файл
+`pyproject.toml`. Например:
+
+```powershell
+cd "C:\Users\user\Downloads\PythonProject"
 ```
 
-## 2. Установка uv и зависимостей
-```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
+В следующих шагах команды нужно выполнять из этого каталога.
+
+## 3. Установить uv
+
+`uv` — программа для установки Python, зависимостей и запуска проекта.
+Выполните:
+
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
-После установки перезапустите терминал. Другие способы установки описаны в
+После установки закройте PowerShell, откройте его снова, вернитесь в каталог
+проекта и проверьте установку:
+
+```powershell
+uv --version
+```
+
+Другие способы установки приведены в
 [официальной документации uv](https://docs.astral.sh/uv/getting-started/installation/).
 
-Находясь в каталоге проекта, установите нужную версию Python и зависимости:
+## 4. Установить Python и зависимости проекта
 
-```bash
+В каталоге проекта выполните:
+
+```powershell
 uv sync --locked
 ```
 
-## 3. Подготовка профиля Chrome
+Команда создаст виртуальное окружение `.venv` и установит в него зависимости
+из файла `uv.lock`.
 
-Парсер использует отдельную копию профиля Chrome. Перед первым запуском
-полностью закройте Chrome, затем выполните:
+## 5. Подготовить отдельный профиль Chrome
 
-```bash
-killall chrome 2>/dev/null
+Полностью закройте все окна Google Chrome. Затем выполните в PowerShell:
+
+```powershell
+$sourceProfile = "$env:LOCALAPPDATA\Google\Chrome\User Data"
+$parserProfile = "$env:LOCALAPPDATA\chrome-profiles\megamarket-12"
+
+if (-not (Test-Path $sourceProfile)) {
+    throw "Профиль Google Chrome не найден: $sourceProfile"
+}
+
+New-Item -ItemType Directory -Force -Path (Split-Path $parserProfile) | Out-Null
+
+if (-not (Test-Path $parserProfile)) {
+    Copy-Item -Path $sourceProfile -Destination $parserProfile -Recurse
+}
 ```
 
-```bash
-rm -rf "$HOME/.cache/chrome-profiles/megamarket-12"
-```
+Копирование выполняется только при первом запуске. В дальнейшем программа
+использует уже созданный профиль `megamarket-12`.
 
-```bash
-cp -r "$HOME/.config/google-chrome" "$HOME/.cache/chrome-profiles/megamarket-12"
-```
+## 6. Запустить Chrome с поддержкой CDP
 
-## 4. Запуск Chrome с CDP
+Выполните в PowerShell:
 
-Запустите браузер в отдельном терминале:
+```powershell
+$chrome = "$env:ProgramFiles\Google\Chrome\Application\chrome.exe"
+$parserProfile = "$env:LOCALAPPDATA\chrome-profiles\megamarket-12"
 
-```bash
-TZ="Europe/Moscow" google-chrome-stable \
-  --disable-blink-features=AutomationControlled \
-  --no-first-run \
-  --no-default-browser-check \
-  --lang=ru-RU \
-  --window-size=1366,768 \
-  --force-webrtc-ip-handling-policy=disable_non_proxied_udp \
-  --user-data-dir="$HOME/.cache/chrome-profiles/megamarket-12" \
+if (-not (Test-Path $chrome)) {
+    $chrome = "$env:LOCALAPPDATA\Google\Chrome\Application\chrome.exe"
+}
+
+if (-not (Test-Path $chrome)) {
+    throw "Google Chrome не найден"
+}
+
+& $chrome `
+  --disable-blink-features=AutomationControlled `
+  --no-first-run `
+  --no-default-browser-check `
+  --lang=ru-RU `
+  --window-size=1366,768 `
+  --force-webrtc-ip-handling-policy=disable_non_proxied_udp `
+  --user-data-dir="$parserProfile" `
   --remote-debugging-port=51111
 ```
 
-Не закрывайте это окно Chrome во время работы программы.
-
-## 5. Запуск парсера
-
-Откройте второй терминал, перейдите в каталог проекта и выполните:
-
+Оставьте открывшийся Chrome запущенным до окончания работы программы.
+Если что-то из вышеперечисленного пошло не так, то просто выполнить программу:
 ```bash
+google-chrome-stable \
+  --no-sandbox \
+  --disable-blink-features=AutomationControlled \
+  --no-first-run \
+  --no-default-browser-check \
+  --user-data-dir="/tmp/uc_$(openssl rand -hex 8)" \
+  --remote-debugging-port=51111
+```
+
+## 7. Запустить парсер
+
+Откройте ещё одно окно PowerShell, перейдите в каталог проекта и выполните:
+
+```powershell
 uv run python main.py
 ```
 
-После этого введите поисковый запрос, например:
+Введите поисковый запрос, например:
 
 ```text
 Поисковый запрос: айфон 17
@@ -102,16 +158,20 @@ PARSER_CAPTCHA_TIMEOUT=300
 | `PARSER_CAPTCHA_TIMEOUT` | `300` | Тайм-аут загрузки страницы, секунды |
 | `PARSER_POPOVER_TIMEOUT` | `10` | Тайм-аут окна продавца, секунды |
 
-Если переменная не нужна, не добавляйте её в `.env`: будет использовано
-значение по умолчанию из `config.py`.
+Если переменная не добавлена в `.env`, используется значение по умолчанию из
+`config.py`.
 
-## Добавление ссылок продавцов в готовый отчёт. 
-### !!! При сборе ссылок на продавцов IP-адрес скорее всего будет заблокирован, поэтому запускайте этот этап только после завершения сбора страниц поисковой выдачи
+## Добавить ссылки продавцов в готовый отчёт
+
+> При сборе ссылок на продавцов IP-адрес с высокой вероятностью будет
+> заблокирован. Запускайте этот этап только после завершения сбора страниц
+> поисковой выдачи.
 
 При запущенном Chrome выполните:
 
-```bash
-uv run python set_seller_links.py "output/megamarket_айфон_17_2026-08-31_09-45.xlsx"
+```powershell
+uv run python set_seller_links.py "output\megamarket_айфон_17_2026-08-31_09-45.xlsx"
 ```
 
-Исходный отчёт не изменяется: рядом будет создана копия с суффиксом `_with_seller_links.xlsx`.
+Укажите имя своего отчёта вместо имени из примера. Исходный файл не изменяется:
+рядом с ним будет создана копия с суффиксом `_with_seller_links.xlsx`.
