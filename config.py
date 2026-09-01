@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     base_url: str = "https://megamarket.ru"
 
     browser_host: str = "127.0.0.1"
-    browser_port: int = 51111
+    browser_port: int = 51112
 
     # Сколько собирать. None — пока сайт отдаёт результаты.
     number_pages: int | None = None  # страниц выдачи
@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     # Паузы между переходами.
     page_delay: int = 2
     card_delay: NonNegativeFloat = 7
+    card_close_delay: NonNegativeFloat = 8
 
     @field_validator("base_url")
     @classmethod

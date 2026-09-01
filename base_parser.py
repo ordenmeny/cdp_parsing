@@ -2,6 +2,7 @@ import asyncio
 from abc import ABC, abstractmethod
 from collections.abc import Hashable, Sequence
 from enum import StrEnum
+from urllib.parse import urlsplit
 
 from parsek_cdp import Page, ProtocolError
 from websockets.exceptions import ConnectionClosed
@@ -69,6 +70,36 @@ class BasePaginatedParser[T](ABC):
         """Получить фактический URL после возможного редиректа."""
         return await self.page.evaluate("location.href") or ""
 
+    @staticmethod
+    def _same_navigation_url(actual: str, expected: str) -> bool:
+        """Совпадают ли адрес, путь и query после возможной нормализации hash."""
+        actual_parts = urlsplit(actual)
+        expected_parts = urlsplit(expected)
+        return (
+            actual_parts.scheme,
+            actual_parts.netloc,
+            actual_parts.path.rstrip("/"),
+            actual_parts.query,
+        ) == (
+            expected_parts.scheme,
+            expected_parts.netloc,
+            expected_parts.path.rstrip("/"),
+            expected_parts.query,
+        )
+
+    async def _wait_for_navigation_url(self, expected: str) -> str:
+        """Дождаться фиксации нового URL, не полагаясь на loadEventFired."""
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + min(self.navigation_timeout, 30.0)
+
+        while True:
+            actual = await self._current_url()
+            if self._same_navigation_url(actual, expected):
+                return actual
+            if loop.time() >= deadline:
+                raise TimeoutError
+            await asyncio.sleep(0.1)
+
     async def _open_search(self, query: str) -> PageState:
         url = self.build_search_url(query)
         print(f"Переходим на страницу 1: {url}")
@@ -77,13 +108,18 @@ class BasePaginatedParser[T](ABC):
             wait_load=True,
             timeout=self.navigation_timeout,
         )
+
+        # Сначала фиксируем адрес после серверного или клиентского редиректа.
+        # Наследник может учитывать тип фактически открытой страницы уже при
+        # ожидании её разметки.
+        self._search_page_url = await self._current_url()
+        if self._search_page_url != url:
+            print(f"Поиск увёл на: {self._search_page_url}")
+
         state = await self.wait_page_state()
         if state is not PageState.READY:
             return state
 
-        self._search_page_url = await self._current_url()
-        if self._search_page_url != url:
-            print(f"Поиск увёл на: {self._search_page_url}")
         await self.wait_content_ready()
         return state
 
@@ -91,11 +127,16 @@ class BasePaginatedParser[T](ABC):
         await asyncio.sleep(self.page_delay)
         url = self.build_page_url(self._search_page_url, page_number)
         print(f"Переходим на страницу {page_number}: {url}")
+        # У SPA и страниц с hash-фильтрами loadEventFired может не прийти даже
+        # после фактической смены документа. Отправляем навигацию без ожидания
+        # этого события, затем подтверждаем новый адрес напрямую.
         await self.page.navigate(
             url,
-            wait_load=True,
-            timeout=self.navigation_timeout,
+            wait_load=False,
         )
+        actual_url = await self._wait_for_navigation_url(url)
+        print(f"Страница {page_number} открыта: {actual_url}")
+
         state = await self.wait_page_state()
         if state is PageState.READY:
             await self.wait_content_ready()

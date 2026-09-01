@@ -13,5 +13,6 @@ class CardToPars(BaseModel):
     price: str = Field(title="Цена")
     seller: str = Field(title="Продавец")
     card_link: str = Field(title="Ссылка на карточку")
+    image_link: str = Field(default="", title="Ссылка на изображение")
     stock: Stock = Field(default=Stock.OUT_OF_STOCK, title="Наличие")
     seller_link: str = Field(default="", title="Ссылка на продавца")

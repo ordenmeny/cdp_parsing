@@ -19,6 +19,12 @@ BLOCKED_SELECTOR = "#request-id"
 BLOCKED_MESSAGE = "Сайт решил, что запросы автоматические."
 
 
+def is_brand_page_url(url: str) -> bool:
+    """Ведёт ли фактический URL на страницу бренда Megamarket."""
+    path_parts = [part for part in urlsplit(url).path.split("/") if part]
+    return bool(path_parts) and path_parts[0] == "brands"
+
+
 async def is_blocked_page(page: Page) -> bool:
     """Отдал ли сайт заглушку вместо страницы.
 
@@ -36,10 +42,17 @@ async def is_blocked_page(page: Page) -> bool:
 
 
 class MegamarketParsePage(BasePaginatedParser[CardToPars]):
-    CARD_SELECTOR = '[data-test="product-item"][data-list-id="main"]'
+    # Разные сборки сайта размечают основные карточки по-разному: обычная
+    # выдача использует data-list-id="main", брендовая — schema.org itemprop.
+    # Объединение покрывает оба варианта и не захватывает рекламные карусели.
+    CARD_SELECTOR = (
+        '[data-test="product-item"][data-list-id="main"], '
+        '[data-test="product-item"][itemprop="itemListElement"]'
+    )
     TITLE_SELECTOR = '[data-test="product-name-link"]'
     PRICE_SELECTOR = '[data-test="product-price"]'
     SELLER_SELECTOR = '[data-test="merchant-name"]'
+    IMAGE_SELECTOR = 'meta[itemprop="image"][content]'
     NOT_FOUND_SELECTOR = ".listing-not-found-block"
     IN_STOCK_TOGGLE_SELECTOR = ".pui-toggle"
     IN_STOCK_LABEL_SELECTOR = ".pui-toggle__label span"
@@ -79,6 +92,11 @@ class MegamarketParsePage(BasePaginatedParser[CardToPars]):
         self.cards_poll_interval = cards_poll_interval
         self.cards_stable_checks = cards_stable_checks
         self.in_stock_only = in_stock_only
+
+    @property
+    def is_brand_page(self) -> bool:
+        """Перенаправил ли поиск на каталог конкретного бренда."""
+        return is_brand_page_url(self._search_page_url)
 
     @property
     def _page_ready_selector(self) -> str:
@@ -137,6 +155,9 @@ class MegamarketParsePage(BasePaginatedParser[CardToPars]):
 
     async def prepare_first_page(self) -> PageState:
         """При включённом флаге выбрать фильтр перед разбором выдачи."""
+        if self.is_brand_page:
+            print("Распознана страница бренда.")
+
         if not self.in_stock_only:
             return PageState.READY
 
@@ -210,6 +231,11 @@ class MegamarketParsePage(BasePaginatedParser[CardToPars]):
             price=await self._get_text(card_element, self.PRICE_SELECTOR),
             seller=await self._get_text(card_element, self.SELLER_SELECTOR),
             card_link=card_link,
+            image_link=await self._get_attribute(
+                card_element,
+                self.IMAGE_SELECTOR,
+                "content",
+            ),
             # Основной запуск собирает выдачу уже с фильтром «В наличии».
             stock=Stock.IN_STOCK,
         )
@@ -310,6 +336,7 @@ class MegamarketParseCard:
             captcha_timeout: float = settings.captcha_timeout,
             popover_timeout: float = settings.popover_timeout,
             card_delay: float = settings.card_delay,
+            card_close_delay: float = settings.card_close_delay,
             number_visits: int | None = settings.number_visits,
     ) -> None:
         self.browser = browser
@@ -317,6 +344,7 @@ class MegamarketParseCard:
         self.captcha_timeout = captcha_timeout
         self.popover_timeout = popover_timeout
         self.card_delay = card_delay
+        self.card_close_delay = card_close_delay
         self.number_visits = number_visits
 
         self._seller_links: dict[str, str] = {}
@@ -446,12 +474,28 @@ class MegamarketParseCard:
             )
             return ""
         finally:
+            # После обработки оставляем карточку открытой на заданное время.
+            # Если вкладку закрыл оператор, дополнительная пауза не нужна.
+            if self.card_close_delay and not self._interrupted:
+                print(
+                    "Карточка обработана. "
+                    f"Закрываем вкладку через {self.card_close_delay:g} сек."
+                )
+                await asyncio.sleep(self.card_close_delay)
+
             # Реально закрываем вкладку, а не только websocket объекта Page.
-            try:
-                await page.cdp.Page.close()
-            except (ConnectionError, ConnectionClosed, ProtocolError):
-                # Пользователь мог уже закрыть эту вкладку вручную.
-                pass
+            # После ручного закрытия target уже уничтожен: второй Page.close()
+            # может зависнуть и помешать вызывающему коду сохранить отчёт.
+            if not self._interrupted:
+                try:
+                    await asyncio.wait_for(page.cdp.Page.close(), timeout=2)
+                except (
+                        TimeoutError,
+                        ConnectionError,
+                        ConnectionClosed,
+                        ProtocolError,
+                ):
+                    pass
 
     async def parse(self, card: CardToPars) -> list[CardToPars]:
         """Заполнить ссылку продавца и вернуть весь список карточек."""

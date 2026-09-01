@@ -129,15 +129,22 @@ class ExcelCardsReport:
         return column
 
     def _required_columns(self) -> dict[str, int]:
+        """Найти доступные колонки и проверить обязательные поля модели.
+
+        Поля со значением по умолчанию могут отсутствовать в старых отчётах.
+        Это позволяет дополнять ссылками продавцов файлы, созданные до
+        появления колонки со ссылкой на изображение.
+        """
         result: dict[str, int] = {}
         missing: list[str] = []
-        for name in CardToPars.model_fields:
+        for name, field in CardToPars.model_fields.items():
             if name == "seller_link":
                 continue
             title = self._field_title(name)
             column = self._columns.get(title)
             if column is None:
-                missing.append(title)
+                if field.is_required():
+                    missing.append(title)
             else:
                 result[name] = column
         if missing:
@@ -158,20 +165,17 @@ class ExcelCardsReport:
                 continue
 
             data = {
-                "title": values.get("title") or "",
-                "price": values.get("price") or "",
-                "seller": values.get("seller") or "",
-                "card_link": values.get("card_link") or "",
-                "seller_link": (
-                    self.sheet.cell(
-                        row=row_number,
-                        column=self._seller_link_column,
-                    ).value
-                    or ""
-                ),
+                name: value
+                for name, value in values.items()
+                if value not in (None, "")
             }
-            if values.get("stock") not in (None, ""):
-                data["stock"] = values["stock"]
+            data["seller_link"] = (
+                self.sheet.cell(
+                    row=row_number,
+                    column=self._seller_link_column,
+                ).value
+                or ""
+            )
 
             try:
                 card = CardToPars.model_validate(data)
