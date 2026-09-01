@@ -59,6 +59,10 @@ class BasePaginatedParser[T](ABC):
     def item_key(self, item: T) -> Hashable:
         """Вернуть устойчивый ключ элемента для дедупликации."""
 
+    async def prepare_first_page(self) -> PageState:
+        """При необходимости подготовить первую страницу перед разбором."""
+        return PageState.READY
+
     async def _current_url(self) -> str:
         """Получить фактический URL после возможного редиректа."""
         return await self.page.evaluate("location.href") or ""
@@ -136,6 +140,14 @@ class BasePaginatedParser[T](ABC):
         if state is not PageState.READY:
             self._print_stop(state, page_number=1, collected=0)
             return all_items
+
+        state = await self.prepare_first_page()
+        if state is not PageState.READY:
+            self._print_stop(state, page_number=1, collected=0)
+            return all_items
+
+        # Подготовка может изменить query или fragment (например, фильтром).
+        self._search_page_url = await self._current_url()
 
         page_number = 1
         while True:

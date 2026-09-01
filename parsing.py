@@ -1,8 +1,9 @@
 import asyncio
+import json
 from collections.abc import Sequence
 from urllib.parse import parse_qs, quote, urljoin, urlsplit, urlunsplit
 
-from parsek_cdp import Element, ElementState, Page, ProtocolError
+from parsek_cdp import Browser, Element, ElementState, Page, ProtocolError
 
 from base_parser import BasePaginatedParser, PageState
 from config import settings
@@ -39,6 +40,10 @@ class MegamarketParsePage(BasePaginatedParser[CardToPars]):
     PRICE_SELECTOR = '[data-test="product-price"]'
     SELLER_SELECTOR = '[data-test="merchant-name"]'
     NOT_FOUND_SELECTOR = ".listing-not-found-block"
+    IN_STOCK_TOGGLE_SELECTOR = ".pui-toggle"
+    IN_STOCK_LABEL_SELECTOR = ".pui-toggle__label span"
+    IN_STOCK_CONTROL_SELECTOR = ".pui-toggle-control"
+    IN_STOCK_SELECTED_CLASS = "pui-toggle-control_selected"
 
     # После loadEventFired сайт продолжает добавлять карточки через JS. Считаем
     # список готовым, когда его длина несколько проверок подряд не меняется.
@@ -53,10 +58,12 @@ class MegamarketParsePage(BasePaginatedParser[CardToPars]):
             number_pages: int | None = settings.number_pages,
             number_items: int | None = settings.number_items,
             captcha_timeout: float = settings.captcha_timeout,
+            filter_timeout: float = settings.filter_timeout,
             page_delay: float = settings.page_delay,
             cards_load_timeout: float = CARDS_LOAD_TIMEOUT,
             cards_poll_interval: float = CARDS_POLL_INTERVAL,
             cards_stable_checks: int = CARDS_STABLE_CHECKS,
+            in_stock_only: bool = False,
     ) -> None:
         super().__init__(
             page,
@@ -66,9 +73,11 @@ class MegamarketParsePage(BasePaginatedParser[CardToPars]):
         )
         self.number_items = number_items
         self.captcha_timeout = captcha_timeout
+        self.filter_timeout = filter_timeout
         self.cards_load_timeout = cards_load_timeout
         self.cards_poll_interval = cards_poll_interval
         self.cards_stable_checks = cards_stable_checks
+        self.in_stock_only = in_stock_only
 
     @property
     def _page_ready_selector(self) -> str:
@@ -88,6 +97,79 @@ class MegamarketParsePage(BasePaginatedParser[CardToPars]):
         parts = urlsplit(search_url)
         path = f"{parts.path.rstrip('/')}/page-{page_number}/"
         return urlunsplit((parts.scheme, parts.netloc, path, parts.query, parts.fragment))
+
+    async def _find_in_stock_control(self) -> tuple[Element, bool] | None:
+        """Найти toggle по подписи, не полагаясь на сложный XPath."""
+        try:
+            toggles = await self.page.select_all(self.IN_STOCK_TOGGLE_SELECTOR)
+        except ProtocolError:
+            return None
+
+        for toggle in toggles:
+            label = await toggle.query_selector(self.IN_STOCK_LABEL_SELECTOR)
+            if label is None:
+                continue
+            if normalize_text(label.text).casefold() != "в наличии":
+                continue
+            control = await toggle.query_selector(self.IN_STOCK_CONTROL_SELECTOR)
+            if control is None:
+                continue
+            classes = control.attributes.get("class", "").split()
+            return control, self.IN_STOCK_SELECTED_CLASS in classes
+        return None
+
+    async def _wait_for_in_stock_control(
+            self,
+            *,
+            selected: bool | None = None,
+    ) -> tuple[Element, bool]:
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self.filter_timeout
+
+        while True:
+            result = await self._find_in_stock_control()
+            if result is not None and (selected is None or result[1] is selected):
+                return result
+            if loop.time() >= deadline:
+                raise TimeoutError
+            await asyncio.sleep(0.1)
+
+    async def prepare_first_page(self) -> PageState:
+        """При включённом флаге выбрать фильтр перед разбором выдачи."""
+        if not self.in_stock_only:
+            return PageState.READY
+
+        print("Включаем фильтр «В наличии»...")
+        try:
+            control, selected = await self._wait_for_in_stock_control()
+        except TimeoutError as error:
+            raise RuntimeError(
+                "Переключатель «В наличии» не появился в DOM за "
+                f"{self.filter_timeout:g} секунд."
+            ) from error
+
+        print("Переключатель «В наличии» найден.")
+        if not selected:
+            await control.mouse_click()
+            print("Клик по переключателю выполнен. Ждём включения фильтра...")
+        # https://megamarket.ru/promo-page/details/#?slug=smartfon-apple-iphone-17-pro-max-512gb-cosmic-orange-bez-rustore-700001132174_254730&merchantId=254730&exclusiveMerchantId=254730&exclusiveWarehouseId=3352735
+        try:
+            await self._wait_for_in_stock_control(selected=True)
+        except TimeoutError as error:
+            raise RuntimeError(
+                "Клик выполнен, но фильтр «В наличии» не включился за "
+                f"{self.filter_timeout:g} секунд."
+            ) from error
+        print("Фильтр «В наличии» включён.")
+
+        # Даём приложению начать обновление выдачи, затем ждём её стабилизации.
+        if self.page_delay:
+            await asyncio.sleep(self.page_delay)
+
+        state = await self.wait_page_state()
+        if state is PageState.READY:
+            await self.wait_content_ready()
+        return state
 
     @staticmethod
     async def _get_text(element: Element, selector: str) -> str:
@@ -122,16 +204,15 @@ class MegamarketParsePage(BasePaginatedParser[CardToPars]):
         if not card_link:
             return None
 
-        price = await self._get_text(card_element, self.PRICE_SELECTOR)
         card = CardToPars(
             title=await self._get_text(card_element, self.TITLE_SELECTOR),
-            price=price,
+            price=await self._get_text(card_element, self.PRICE_SELECTOR),
             seller=await self._get_text(card_element, self.SELLER_SELECTOR),
             card_link=card_link,
-            # цену показывают только у того, что можно купить
-            stock=Stock.IN_STOCK if price else Stock.OUT_OF_STOCK,
+            # Основной запуск собирает выдачу уже с фильтром «В наличии».
+            stock=Stock.IN_STOCK,
         )
-        # цену не требуем: карточка без неё — это товар не в наличии
+        # Цену не требуем: у некоторых карточек она может появиться позже.
         if not (card.title and card.seller):
             return None
 
@@ -222,7 +303,7 @@ class MegamarketParseCard:
 
     def __init__(
             self,
-            page: Page,
+            browser: Browser,
             cards: Sequence[CardToPars],
             *,
             captcha_timeout: float = settings.captcha_timeout,
@@ -230,7 +311,7 @@ class MegamarketParseCard:
             card_delay: float = settings.card_delay,
             number_visits: int | None = settings.number_visits,
     ) -> None:
-        self.page = page
+        self.browser = browser
         self.cards = list(cards)
         self.captcha_timeout = captcha_timeout
         self.popover_timeout = popover_timeout
@@ -240,6 +321,7 @@ class MegamarketParseCard:
         self._seller_links: dict[str, str] = {}
         self._visits = 0
         self._blocked = False
+        self._interrupted = False
         for card in self.cards:
             if card.seller_link:
                 self._seller_links.setdefault(
@@ -279,53 +361,96 @@ class MegamarketParseCard:
         slug = path[len(cls.SHOP_PATH):].strip("/").split("/")[0]
         return f"{settings.base_url}{cls.SHOP_PATH}{slug}/" if slug else ""
 
+    async def _wait_for_seller_name(self, page: Page, expected: str) -> bool:
+        """Дождаться данных новой карточки после обычной или hash-навигации."""
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self.popover_timeout
+        expression = (
+            f"(document.querySelector({json.dumps(self.MERCHANT_NAME_SELECTOR)}) "
+            "|| {}).textContent || ''"
+        )
+        expected = normalize_text(expected).casefold()
+
+        while True:
+            current = await page.evaluate(expression)
+
+            if normalize_text(current or "").casefold() == expected:
+                return True
+            if loop.time() >= deadline:
+                return False
+            await asyncio.sleep(0.1)
+
     async def _parse_seller_link(self, card: CardToPars) -> str:
-        """Открыть карточку и получить ссылку продавца из модального окна."""
+        """Открыть карточку в новой вкладке и получить ссылку продавца."""
         print(f"Открываем карточку продавца «{card.seller}»: {card.card_link}")
+        page = await self.browser.new_page()
         try:
-            await self.page.navigate(
-                card.card_link,
-                wait_load=True,
-                timeout=self.captcha_timeout,
+            try:
+                await page.navigate(
+                    card.card_link,
+                    # У promo-page карточки отличаются fragment-частью URL.
+                    # Такая навигация не обязана породить loadEventFired.
+                    wait_load=False,
+                    timeout=self.captcha_timeout,
+                )
+                await page.wait_for_selector(
+                    self._page_ready_selector,
+                    state=ElementState.ATTACHED,
+                    timeout=self.captcha_timeout,
+                )
+            except TimeoutError:
+                print(f"Карточка не открылась: {card.card_link}")
+                return ""
+
+            if await is_blocked_page(page):
+                print(f"{BLOCKED_MESSAGE} Ссылку продавца не собираем.")
+                self._blocked = True
+                return ""
+
+            if not await self._wait_for_seller_name(page, card.seller):
+                print(
+                    f"Карточка продавца «{card.seller}» не успела обновиться."
+                )
+                return ""
+
+            seller_element = await page.select(selector=self.MERCHANT_NAME_SELECTOR)
+            if seller_element is None:
+                print(f"Название продавца «{card.seller}» на странице не найдено.")
+                return ""
+
+            try:
+                await seller_element.mouse_click()
+                link_element = await page.wait_for_selector(
+                    self.SELLER_LINK_SELECTOR,
+                    state=ElementState.ATTACHED,
+                    timeout=self.popover_timeout,
+                )
+            except TimeoutError:
+                print(f"Модальное окно продавца «{card.seller}» не открылось.")
+                return ""
+
+            shop_link = ""
+            if link_element is not None:
+                shop_link = self._normalize_shop_link(
+                    link_element.attributes.get("href", "")
+                )
+
+            print(f"Ссылка продавца: {shop_link or 'не найдена'}")
+            return shop_link
+        except ProtocolError:
+            self._interrupted = True
+            print(
+                "Вкладка карточки закрыта вручную. "
+                "Останавливаем сбор ссылок и сохраняем результат."
             )
-            await self.page.wait_for_selector(
-                self._page_ready_selector,
-                state=ElementState.ATTACHED,
-                timeout=self.captcha_timeout,
-            )
-        except (TimeoutError, ProtocolError):
-            print(f"Карточка не открылась: {card.card_link}")
             return ""
-
-        if await is_blocked_page(self.page):
-            print(f"{BLOCKED_MESSAGE} Ссылку продавца не собираем.")
-            self._blocked = True
-            return ""
-
-        seller_element = await self.page.select(selector=self.MERCHANT_NAME_SELECTOR)
-        if seller_element is None:
-            print(f"Название продавца «{card.seller}» на странице не найдено.")
-            return ""
-
-        try:
-            await seller_element.mouse_click()
-            link_element = await self.page.wait_for_selector(
-                self.SELLER_LINK_SELECTOR,
-                state=ElementState.ATTACHED,
-                timeout=self.popover_timeout,
-            )
-        except (TimeoutError, ProtocolError):
-            print(f"Модальное окно продавца «{card.seller}» не открылось.")
-            return ""
-
-        shop_link = ""
-        if link_element is not None:
-            shop_link = self._normalize_shop_link(
-                link_element.attributes.get("href", "")
-            )
-
-        print(f"Ссылка продавца: {shop_link or 'не найдена'}")
-        return shop_link
+        finally:
+            # Реально закрываем вкладку, а не только websocket объекта Page.
+            try:
+                await page.cdp.Page.close()
+            except ProtocolError:
+                # Пользователь мог уже закрыть эту вкладку вручную.
+                pass
 
     async def parse(self, card: CardToPars) -> list[CardToPars]:
         """Заполнить ссылку продавца и вернуть весь список карточек."""
@@ -350,13 +475,19 @@ class MegamarketParseCard:
             print("Сайт уже показал блокировку, новые карточки не открываем.")
             return self.get_cards()
 
+        if self._interrupted:
+            print("Сбор ссылок остановлен после ручного закрытия вкладки.")
+            return self.get_cards()
+
         if self.number_visits is not None and self._visits >= self.number_visits:
             print(
                 f"Достигнут лимит переходов в карточки: {self.number_visits}."
             )
             return self.get_cards()
 
-        if self._visits:
+        # Пауза перед каждым реальным переходом, включая первый. В main.py
+        # это не даёт сразу после поисковой выдачи открыть карточку.
+        if self.card_delay:
             await asyncio.sleep(self.card_delay)
 
         self._visits += 1
@@ -371,6 +502,6 @@ class MegamarketParseCard:
         """Обработать список, открывая не более одной карточки на продавца."""
         for card in self.cards:
             await self.parse(card)
-            if self._blocked:
+            if self._blocked or self._interrupted:
                 break
         return self.get_cards()

@@ -22,17 +22,19 @@ class Settings(BaseSettings):
     browser_port: int = 51111
 
     # Сколько собирать. None — пока сайт отдаёт результаты.
-    number_pages: int | None = 3  # страниц выдачи
-    number_items: int | None = 4  # карточек с одной страницы
+    number_pages: int | None = None  # страниц выдачи
+    number_items: int | None = None # карточек с одной страницы
     number_visits: int | None = None  # заходов в карточки за продавцами
 
     captcha_timeout: int = 300
+    # Обычный элемент фильтра должен появиться и переключиться быстро.
+    filter_timeout: int = 15
     # Окно продавца на карточке: раскрывается сразу или не раскроется вовсе.
     popover_timeout: int = 10
 
     # Паузы между переходами.
     page_delay: int = 2
-    card_delay: int = 2
+    card_delay: NonNegativeFloat = 7
 
     @field_validator("base_url")
     @classmethod

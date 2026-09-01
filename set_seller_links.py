@@ -20,9 +20,11 @@ async def set_seller_links(path: str | Path) -> Path:
 
     try:
         browser = await connect_browser(settings.browser_endpoint)
-        page = await browser.new_page()
-        parser = MegamarketParseCard(page, report.cards)
+        parser = MegamarketParseCard(browser, report.cards)
         await parser.parse_all()
+    except asyncio.CancelledError:
+        print("Сбор остановлен пользователем. Сохраняем собранные ссылки...")
+        raise
     finally:
         # Блокировка и другие сбои не должны уничтожить уже собранный результат.
         output_path = report.save()
@@ -56,4 +58,7 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("Работа остановлена пользователем. Собранные ссылки сохранены.")
