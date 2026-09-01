@@ -4,6 +4,7 @@ from collections.abc import Sequence
 from urllib.parse import parse_qs, quote, urljoin, urlsplit, urlunsplit
 
 from parsek_cdp import Browser, Element, ElementState, Page, ProtocolError
+from websockets.exceptions import ConnectionClosed
 
 from base_parser import BasePaginatedParser, PageState
 from config import settings
@@ -437,7 +438,7 @@ class MegamarketParseCard:
 
             print(f"Ссылка продавца: {shop_link or 'не найдена'}")
             return shop_link
-        except ProtocolError:
+        except (ConnectionError, ConnectionClosed, ProtocolError):
             self._interrupted = True
             print(
                 "Вкладка карточки закрыта вручную. "
@@ -448,7 +449,7 @@ class MegamarketParseCard:
             # Реально закрываем вкладку, а не только websocket объекта Page.
             try:
                 await page.cdp.Page.close()
-            except ProtocolError:
+            except (ConnectionError, ConnectionClosed, ProtocolError):
                 # Пользователь мог уже закрыть эту вкладку вручную.
                 pass
 

@@ -1,6 +1,7 @@
 import asyncio
 
-from parsek_cdp import Browser
+from parsek_cdp import Browser, ProtocolError
+from websockets.exceptions import ConnectionClosed
 
 import utils
 from config import settings
@@ -30,7 +31,11 @@ async def main() -> None:
             )
             in_stock_cards = await in_stock_parser.parse(query)
         finally:
-            await page.cdp.Page.close()
+            try:
+                await page.cdp.Page.close()
+            except (ConnectionError, ConnectionClosed, ProtocolError):
+                # Вкладка могла быть закрыта вручную.
+                pass
 
         # Определение наличия по второму проходу пока отключено: отсутствие
         # карточки в фильтрованной выдаче не гарантирует отсутствие товара.
@@ -52,14 +57,12 @@ async def main() -> None:
         report = ExcelReport(in_stock_cards, model=CardToPars, query=query)
         output_path = report.save()
 
-        try:
-            await MegamarketParseCard(browser, in_stock_cards).parse_all()
-        except asyncio.CancelledError:
-            print("Сбор остановлен пользователем. Сохраняем собранные ссылки...")
-            raise
-        finally:
-            # При сбое или Ctrl+C сохраняем также ссылки, собранные до него.
-            report.save(output_path)
+        if not in_stock_parser.interrupted:
+            try:
+                await MegamarketParseCard(browser, in_stock_cards).parse_all()
+            finally:
+                # При сбое сохраняем также ссылки, собранные до него.
+                report.save(output_path)
 
         # print_cards(in_stock_cards)
 
@@ -68,7 +71,4 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        print("Работа остановлена пользователем.")
+    asyncio.run(main())

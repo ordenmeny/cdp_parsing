@@ -4,6 +4,7 @@ from collections.abc import Hashable, Sequence
 from enum import StrEnum
 
 from parsek_cdp import Page, ProtocolError
+from websockets.exceptions import ConnectionClosed
 
 
 class PageState(StrEnum):
@@ -34,6 +35,7 @@ class BasePaginatedParser[T](ABC):
 
         self._search_page_url = ""
         self._seen_item_keys: set[Hashable] = set()
+        self.interrupted = False
 
     @abstractmethod
     def build_search_url(self, query: str) -> str:
@@ -127,6 +129,7 @@ class BasePaginatedParser[T](ABC):
         all_items: list[T] = []
         self._search_page_url = ""
         self._seen_item_keys.clear()
+        self.interrupted = False
 
         if self.number_pages is not None and self.number_pages < 1:
             return all_items
@@ -136,26 +139,48 @@ class BasePaginatedParser[T](ABC):
         except TimeoutError:
             print("Страница 1 не открылась. Отдаём пустой результат.")
             return all_items
+        except (ConnectionError, ConnectionClosed, ProtocolError):
+            self.interrupted = True
+            print("Поисковая вкладка закрыта. Отдаём пустой результат.")
+            return all_items
 
         if state is not PageState.READY:
             self._print_stop(state, page_number=1, collected=0)
             return all_items
 
-        state = await self.prepare_first_page()
+        try:
+            state = await self.prepare_first_page()
+        except (ConnectionError, ConnectionClosed, ProtocolError):
+            self.interrupted = True
+            print("Поисковая вкладка закрыта. Отдаём пустой результат.")
+            return all_items
         if state is not PageState.READY:
             self._print_stop(state, page_number=1, collected=0)
             return all_items
 
         # Подготовка может изменить query или fragment (например, фильтром).
-        self._search_page_url = await self._current_url()
+        try:
+            self._search_page_url = await self._current_url()
+        except (ConnectionError, ConnectionClosed, ProtocolError):
+            self.interrupted = True
+            print("Поисковая вкладка закрыта. Отдаём пустой результат.")
+            return all_items
 
         page_number = 1
         while True:
             try:
                 page_items = await self.parse_current_page()
-            except ProtocolError as error:
+            except (ConnectionError, ConnectionClosed):
+                self.interrupted = True
                 print(
-                    f"Страница {page_number} перерисовалась во время разбора: "
+                    "Поисковая вкладка закрыта. "
+                    f"Отдаём собранное, элементов: {len(all_items)}."
+                )
+                break
+            except ProtocolError as error:
+                self.interrupted = True
+                print(
+                    f"Страница {page_number} закрылась или перерисовалась: "
                     f"{error}. Отдаём собранное, элементов: {len(all_items)}."
                 )
                 break
@@ -182,6 +207,13 @@ class BasePaginatedParser[T](ABC):
             except TimeoutError:
                 print(
                     f"Страница {page_number} не открылась. "
+                    f"Отдаём собранное, элементов: {len(all_items)}."
+                )
+                break
+            except (ConnectionError, ConnectionClosed, ProtocolError):
+                self.interrupted = True
+                print(
+                    "Поисковая вкладка закрыта. "
                     f"Отдаём собранное, элементов: {len(all_items)}."
                 )
                 break
