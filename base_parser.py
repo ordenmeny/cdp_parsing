@@ -7,6 +7,8 @@ from urllib.parse import urlsplit
 from parsek_cdp import Page, ProtocolError
 from websockets.exceptions import ConnectionClosed
 
+import utils
+
 
 class PageState(StrEnum):
     READY = "ready"
@@ -27,15 +29,25 @@ class BasePaginatedParser[T](ABC):
             *,
             number_pages: int | None,
             start_page: int,
-            page_delay: float,
+            page_delay_min: int,
+            page_delay_max: int,
+            long_pause_every_pages: int,
+            long_pause_min: int,
+            long_pause_max: int,
             navigation_timeout: float,
     ) -> None:
         if start_page < 1:
             raise ValueError("Номер начальной страницы должен быть не меньше 1.")
+        if long_pause_every_pages < 1:
+            raise ValueError("Интервал длинной паузы должен быть не меньше 1.")
         self.page = page
         self.number_pages = number_pages
         self.start_page = start_page
-        self.page_delay = page_delay
+        self.page_delay_min = page_delay_min
+        self.page_delay_max = page_delay_max
+        self.long_pause_every_pages = long_pause_every_pages
+        self.long_pause_min = long_pause_min
+        self.long_pause_max = long_pause_max
         self.navigation_timeout = navigation_timeout
 
         self._search_page_url = ""
@@ -127,8 +139,21 @@ class BasePaginatedParser[T](ABC):
         await self.wait_content_ready()
         return state
 
-    async def _go_to_next_page(self, page_number: int) -> PageState:
-        await asyncio.sleep(self.page_delay)
+    async def _go_to_next_page(
+            self,
+            page_number: int,
+            *,
+            parsed_pages: int = 0,
+    ) -> PageState:
+        if (
+            parsed_pages > 0
+            and parsed_pages % self.long_pause_every_pages == 0
+        ):
+            await self._sleep_long_pause(page_number, parsed_pages)
+        else:
+            await self._sleep_page_delay(
+                f"перед переходом на страницу {page_number}",
+            )
         url = self.build_page_url(self._search_page_url, page_number)
         print(f"Переходим на страницу {page_number}: {url}")
         # У SPA и страниц с hash-фильтрами loadEventFired может не прийти даже
@@ -145,6 +170,32 @@ class BasePaginatedParser[T](ABC):
         if state is PageState.READY:
             await self.wait_content_ready()
         return state
+
+    async def _sleep_page_delay(self, reason: str) -> None:
+        delay = utils.get_random_delay(
+            self.page_delay_min,
+            self.page_delay_max,
+        )
+        print(f"Ждём {delay} сек. {reason}.")
+        if delay:
+            await asyncio.sleep(delay)
+
+    async def _sleep_long_pause(
+            self,
+            next_page_number: int,
+            parsed_pages: int,
+    ) -> None:
+        delay = utils.get_random_delay(
+            self.long_pause_min,
+            self.long_pause_max,
+        )
+        print(
+            f"Собрано страниц за текущий запуск: {parsed_pages}. "
+            f"Ждём {delay} сек. перед переходом "
+            f"на страницу {next_page_number}."
+        )
+        if delay:
+            await asyncio.sleep(delay)
 
     def _only_new_items(self, items: Sequence[T]) -> list[T]:
         result: list[T] = []
@@ -271,7 +322,10 @@ class BasePaginatedParser[T](ABC):
 
             page_number += 1
             try:
-                state = await self._go_to_next_page(page_number)
+                state = await self._go_to_next_page(
+                    page_number,
+                    parsed_pages=parsed_pages,
+                )
             except TimeoutError:
                 print(
                     f"Страница {page_number} не открылась. "

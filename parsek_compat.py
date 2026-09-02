@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 from parsek_cdp.cdp import Target as TargetDomain
+from parsek_cdp.core.browser import Browser
 from parsek_cdp.core.target import Target
 from websockets.exceptions import InvalidStatus
+
+
+_original_browser_discover = Browser._discover
 
 
 def _is_missing_target(error: InvalidStatus) -> bool:
@@ -28,6 +32,15 @@ async def _safe_on_target_created(
     """
     info = event.target_info
     parent_id = info.opener_id or info.parent_frame_id
+
+    # Browser.watch() отдельно создаёт Page для верхнеуровневых вкладок.
+    # Если общий обработчик тоже подключится к тому же target, Яндекс Браузер
+    # может перестать отвечать на Page.getFrameTree во втором соединении.
+    if (
+        self.type_ == "browser"
+        and info.type_ in {"page", "tab"}
+    ):
+        return
 
     if parent_id is not None and parent_id != self.id:
         for child in list(self.targets):
@@ -55,11 +68,31 @@ async def _safe_on_target_created(
         raise
 
 
-def install_parsek_target_race_fix() -> None:
-    """Install the target-created race fix once for this Python process."""
-    current = Target._on_target_created
-    if getattr(current, "__parsek_missing_target_fix__", False):
-        return
+async def _discover_without_empty_pages(self: Browser) -> None:
+    """Не подключаться к пустым служебным page-targets Яндекс Браузера.
 
-    _safe_on_target_created.__parsek_missing_target_fix__ = True
-    Target._on_target_created = _safe_on_target_created
+    Яндекс Браузер публикует target с ``type=page`` и пустым URL, однако не
+    отвечает на ``Page.getFrameTree`` для него. Стандартный ``_discover`` ждёт
+    этот ответ бесконечно и не завершает ``Browser.connect_http``.
+    """
+    empty_page_ids = [
+        target.id
+        for target in self.targets
+        if target.type_ in {"page", "tab"} and not target.url.strip()
+    ]
+    for target_id in empty_page_ids:
+        self._targets.pop(target_id, None)
+    await _original_browser_discover(self)
+
+
+def install_parsek_target_race_fix() -> None:
+    """Install compatibility fixes once for this Python process."""
+    current = Target._on_target_created
+    if not getattr(current, "__parsek_missing_target_fix__", False):
+        _safe_on_target_created.__parsek_missing_target_fix__ = True
+        Target._on_target_created = _safe_on_target_created
+
+    current_discover = Browser._discover
+    if not getattr(current_discover, "__parsek_empty_page_fix__", False):
+        _discover_without_empty_pages.__parsek_empty_page_fix__ = True
+        Browser._discover = _discover_without_empty_pages

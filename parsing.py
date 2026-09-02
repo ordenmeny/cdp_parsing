@@ -75,17 +75,30 @@ class MegamarketParsePage(BasePaginatedParser[CardToPars]):
             start_page: int = 1,
             captcha_timeout: float = settings.captcha_timeout,
             filter_timeout: float = settings.filter_timeout,
-            page_delay: float = settings.page_delay,
+            page_delay_min: int = settings.page_delay_min,
+            page_delay_max: int = settings.page_delay_max,
+            long_pause_every_pages: int = settings.long_pause_every_pages,
+            long_pause_min: int = settings.long_pause_min,
+            long_pause_max: int = settings.long_pause_max,
+            page_delay: int | None = None,
             cards_load_timeout: float = CARDS_LOAD_TIMEOUT,
             cards_poll_interval: float = CARDS_POLL_INTERVAL,
             cards_stable_checks: int = CARDS_STABLE_CHECKS,
             in_stock_only: bool = False,
     ) -> None:
+        # Совместимость с существующими вызовами и тестами ``page_delay=0``.
+        if page_delay is not None:
+            page_delay_min = page_delay
+            page_delay_max = page_delay
         super().__init__(
             page,
             number_pages=number_pages,
             start_page=start_page,
-            page_delay=page_delay,
+            page_delay_min=page_delay_min,
+            page_delay_max=page_delay_max,
+            long_pause_every_pages=long_pause_every_pages,
+            long_pause_min=long_pause_min,
+            long_pause_max=long_pause_max,
             navigation_timeout=captcha_timeout,
         )
         self.number_items = number_items
@@ -189,8 +202,7 @@ class MegamarketParsePage(BasePaginatedParser[CardToPars]):
         print("Фильтр «В наличии» включён.")
 
         # Даём приложению начать обновление выдачи, затем ждём её стабилизации.
-        if self.page_delay:
-            await asyncio.sleep(self.page_delay)
+        await self._sleep_page_delay("перед проверкой обновлённой выдачи")
 
         state = await self.wait_page_state()
         if state is PageState.READY:

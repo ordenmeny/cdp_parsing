@@ -12,13 +12,26 @@ from parsing import (
     MegamarketParsePage,
 )
 from report import ExcelReport, join_excel_reports
+from sellers import add_new_sellers_from_cards
 from slug import SlugifyCard
 from utils import print_cards
 
 
 async def connect_browser(endpoint: str) -> Browser:
     install_parsek_target_race_fix()
-    return await Browser.connect_http(endpoint)
+    print(f"Подключаемся к браузеру: {endpoint}...")
+    try:
+        browser = await asyncio.wait_for(
+            Browser.connect_http(endpoint),
+            timeout=30,
+        )
+    except TimeoutError as error:
+        raise RuntimeError(
+            f"Не удалось подключиться к браузеру по адресу {endpoint} "
+            "за 30 секунд."
+        ) from error
+    print("Подключение к браузеру установлено.")
+    return browser
 
 
 def set_sellers_links(cards: list[CardToPars]) -> None:
@@ -36,7 +49,9 @@ async def main() -> None:
     try:
         query = command.query
 
+        print("Создаём вкладку для парсинга...")
         page = await browser.new_page()
+        print("Вкладка для парсинга создана.")
         try:
             in_stock_parser = MegamarketParsePage(
                 page,
@@ -57,6 +72,8 @@ async def main() -> None:
                 ):
                     pass
 
+        added_sellers = add_new_sellers_from_cards(in_stock_cards)
+        print(f"Добавлено новых продавцов в базу: {added_sellers}.")
 
         report = ExcelReport(
             in_stock_cards,

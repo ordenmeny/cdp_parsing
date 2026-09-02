@@ -1,13 +1,32 @@
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
+import random
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from pydantic import BaseModel
 
+from config import settings
+
 
 def normalize_text(value: str) -> str:
     return " ".join(value.split())
+
+
+def get_random_delay(
+        min_seconds: int | None = None,
+        max_seconds: int | None = None,
+) -> int:
+    """Вернуть случайную задержку из настроенного диапазона."""
+    if min_seconds is None:
+        min_seconds = settings.page_delay_min
+    if max_seconds is None:
+        max_seconds = settings.page_delay_max
+    if min_seconds < 0 or max_seconds < 0:
+        raise ValueError("Время ожидания не может быть отрицательным.")
+    if min_seconds > max_seconds:
+        raise ValueError("Минимальное время ожидания больше максимального.")
+    return random.randint(min_seconds, max_seconds)
 
 
 def read_query() -> str:
