@@ -3,6 +3,7 @@ from copy import copy
 from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font
@@ -37,11 +38,22 @@ class ExcelReport:
             return ""
         return str(value)
 
+    @staticmethod
+    def _safe_name(value: str, fallback: str) -> str:
+        return re.sub(r"[^\w-]+", "_", value).strip("_") or fallback
+
+    @classmethod
+    def _site_name(cls) -> str:
+        host = urlsplit(settings.base_url).hostname or "site"
+        host = host.removeprefix("www.")
+        return cls._safe_name(host.split(".")[0], "site")
+
     def _default_path(self) -> Path:
-        stamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
-        query = re.sub(r"[^\w-]+", "_", self.query).strip("_")
-        name = f"megamarket_{query}_{stamp}" if query else f"megamarket_{stamp}"
-        return settings.report_dir / f"{name}.xlsx"
+        # Микросекунды гарантируют отдельное имя даже при быстром перезапуске.
+        stamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S-%f")
+        query = self._safe_name(self.query, "query")
+        directory = settings.report_dir / f"{self._site_name()}-{query}"
+        return directory / f"{stamp}-{query}.xlsx"
 
     def save(self, path: str | Path | None = None) -> Path:
         target = Path(path) if path else self._default_path()
@@ -76,6 +88,88 @@ class ExcelReport:
         workbook.save(target)
         print(f"Отчёт сохранён: {target.resolve()} (строк: {len(self.rows)})")
         return target
+
+
+def join_excel_reports(directory: str | Path) -> Path:
+    """Объединить строки всех отчётов ``.xlsx`` в указанной папке."""
+    source_dir = Path(directory).expanduser().resolve()
+    if not source_dir.is_dir():
+        raise NotADirectoryError(f"Папка с отчётами не найдена: {source_dir}")
+
+    files = sorted(
+        path
+        for path in source_dir.glob("*.xlsx")
+        if path.is_file()
+        and not path.name.startswith(("all-", "~$"))
+    )
+    if not files:
+        raise FileNotFoundError(f"В папке нет файлов .xlsx: {source_dir}")
+
+    stamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S-%f")
+    site = ExcelReport._site_name()
+    directory_prefix = f"{site}-"
+    query = (
+        source_dir.name[len(directory_prefix):]
+        if source_dir.name.startswith(directory_prefix)
+        else source_dir.name
+    )
+    output_path = source_dir / f"all-{site}{stamp}-{query}.xlsx"
+    result = Workbook()
+    result_sheet = result.active
+    result_sheet.title = ExcelReport.SHEET_TITLE
+    expected_headers: list[str] | None = None
+    output_row = 1
+
+    for source_path in files:
+        workbook = load_workbook(source_path, read_only=True, data_only=False)
+        try:
+            sheet = (
+                workbook[ExcelReport.SHEET_TITLE]
+                if ExcelReport.SHEET_TITLE in workbook.sheetnames
+                else workbook.active
+            )
+            rows = sheet.iter_rows(values_only=True)
+            headers = [str(value or "") for value in next(rows, ())]
+            if not headers:
+                continue
+            if expected_headers is None:
+                expected_headers = headers
+                result_sheet.append(headers)
+                output_row += 1
+            elif headers != expected_headers:
+                raise ValueError(
+                    f"Структура колонок в файле {source_path.name} отличается."
+                )
+
+            for values in rows:
+                if any(value not in (None, "") for value in values):
+                    result_sheet.append(values)
+                    output_row += 1
+        finally:
+            workbook.close()
+
+    if expected_headers is None:
+        raise ValueError("В найденных файлах отсутствуют заголовки таблицы.")
+
+    for number in range(1, len(expected_headers) + 1):
+        cell = result_sheet.cell(row=1, column=number)
+        cell.font = Font(bold=True)
+        letter = get_column_letter(number)
+        longest = max(len(str(cell.value or "")) for cell in result_sheet[letter])
+        result_sheet.column_dimensions[letter].width = min(
+            longest + 2,
+            ExcelReport.MAX_WIDTH,
+        )
+
+    result_sheet.freeze_panes = "A2"
+    last_column = get_column_letter(len(expected_headers))
+    result_sheet.auto_filter.ref = f"A1:{last_column}{output_row - 1}"
+    result.save(output_path)
+    print(
+        f"Общий отчёт сохранён: {output_path} "
+        f"(файлов: {len(files)}, строк: {output_row - 2})"
+    )
+    return output_path
 
 
 class ExcelCardsReport:

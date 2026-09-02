@@ -1,5 +1,6 @@
 import asyncio
 import json
+import re
 from collections.abc import Sequence
 from urllib.parse import parse_qs, quote, urljoin, urlsplit, urlunsplit
 
@@ -71,6 +72,7 @@ class MegamarketParsePage(BasePaginatedParser[CardToPars]):
             *,
             number_pages: int | None = settings.number_pages,
             number_items: int | None = settings.number_items,
+            start_page: int = 1,
             captcha_timeout: float = settings.captcha_timeout,
             filter_timeout: float = settings.filter_timeout,
             page_delay: float = settings.page_delay,
@@ -82,6 +84,7 @@ class MegamarketParsePage(BasePaginatedParser[CardToPars]):
         super().__init__(
             page,
             number_pages=number_pages,
+            start_page=start_page,
             page_delay=page_delay,
             navigation_timeout=captcha_timeout,
         )
@@ -114,7 +117,8 @@ class MegamarketParsePage(BasePaginatedParser[CardToPars]):
         пути, остальное от адреса не меняется.
         """
         parts = urlsplit(search_url)
-        path = f"{parts.path.rstrip('/')}/page-{page_number}/"
+        base_path = re.sub(r"/page-\d+$", "", parts.path.rstrip("/"))
+        path = f"{base_path}/page-{page_number}/"
         return urlunsplit((parts.scheme, parts.netloc, path, parts.query, parts.fragment))
 
     async def _find_in_stock_control(self) -> tuple[Element, bool] | None:
@@ -247,7 +251,6 @@ class MegamarketParsePage(BasePaginatedParser[CardToPars]):
 
     async def parse_current_page(self) -> list[CardToPars]:
         """Разобрать все карточки открытой страницы выдачи."""
-        print("Начинаем парсить страницу...")
         cards: list[CardToPars] = []
         async with self.page.domain_enabled(self.page.cdp.DOM):
             selected_cards = await self.page.select_all(self.CARD_SELECTOR)

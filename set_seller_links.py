@@ -5,11 +5,13 @@ from pathlib import Path
 from parsek_cdp import Browser
 
 from config import settings
+from parsek_compat import install_parsek_target_race_fix
 from parsing import MegamarketParseCard
 from report import ExcelCardsReport
 
 
 async def connect_browser(endpoint: str) -> Browser:
+    install_parsek_target_race_fix()
     return await Browser.connect_http(endpoint)
 
 

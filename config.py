@@ -33,7 +33,7 @@ class Settings(BaseSettings):
     popover_timeout: int = 10
 
     # Паузы между переходами.
-    page_delay: int = 2
+    page_delay: int = 8
     card_delay: NonNegativeFloat = 7
     card_close_delay: NonNegativeFloat = 8
 

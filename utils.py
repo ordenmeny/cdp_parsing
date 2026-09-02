@@ -1,4 +1,6 @@
 from collections.abc import Sequence
+from dataclasses import dataclass
+from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from pydantic import BaseModel
@@ -10,6 +12,56 @@ def normalize_text(value: str) -> str:
 
 def read_query() -> str:
     return input("Поисковый запрос: ").strip()
+
+
+@dataclass(frozen=True, slots=True)
+class ParseCommand:
+    query: str
+    start_page: int = 1
+
+
+@dataclass(frozen=True, slots=True)
+class JoinCommand:
+    directory: Path
+
+
+type InputCommand = ParseCommand | JoinCommand
+
+
+def parse_input_command(value: str) -> InputCommand:
+    """Разобрать поисковый запрос, продолжение или команду объединения."""
+    value = value.strip()
+    if not value:
+        raise ValueError("Введите поисковый запрос или команду join||<папка>.")
+
+    head, separator, tail = value.partition("||")
+    if not separator:
+        return ParseCommand(query=value)
+
+    head = head.strip()
+    tail = tail.strip()
+    if head.casefold() == "join":
+        path = tail.strip('"')
+        if not path:
+            raise ValueError("После join|| укажите путь до папки с отчётами.")
+        return JoinCommand(directory=Path(path).expanduser())
+
+    if not head:
+        raise ValueError("Перед || должен быть поисковый запрос.")
+    if not tail.isdecimal() or int(tail) < 1:
+        raise ValueError("После || укажите номер начальной страницы от 1 и выше.")
+    return ParseCommand(query=head, start_page=int(tail))
+
+
+def read_command() -> InputCommand:
+    """Запрашивать команду, пока пользователь не введёт корректное значение."""
+    while True:
+        entered = input("Запрос[||страница] или join||<папка>: ")
+        try:
+            return parse_input_command(entered)
+        except ValueError as error:
+            print(f"Ошибка ввода: {error}")
+
 
 
 def print_cards(cards: Sequence[BaseModel]) -> None:

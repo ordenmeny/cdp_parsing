@@ -26,11 +26,15 @@ class BasePaginatedParser[T](ABC):
             page: Page,
             *,
             number_pages: int | None,
+            start_page: int,
             page_delay: float,
             navigation_timeout: float,
     ) -> None:
+        if start_page < 1:
+            raise ValueError("Номер начальной страницы должен быть не меньше 1.")
         self.page = page
         self.number_pages = number_pages
+        self.start_page = start_page
         self.page_delay = page_delay
         self.navigation_timeout = navigation_timeout
 
@@ -102,7 +106,7 @@ class BasePaginatedParser[T](ABC):
 
     async def _open_search(self, query: str) -> PageState:
         url = self.build_search_url(query)
-        print(f"Переходим на страницу 1: {url}")
+        print(f"Открываем исходную страницу поиска: {url}")
         await self.page.navigate(
             url,
             wait_load=True,
@@ -178,7 +182,7 @@ class BasePaginatedParser[T](ABC):
         try:
             state = await self._open_search(query)
         except TimeoutError:
-            print("Страница 1 не открылась. Отдаём пустой результат.")
+            print("Исходная страница поиска не открылась. Отдаём пустой результат.")
             return all_items
         except (ConnectionError, ConnectionClosed, ProtocolError):
             self.interrupted = True
@@ -207,8 +211,30 @@ class BasePaginatedParser[T](ABC):
             print("Поисковая вкладка закрыта. Отдаём пустой результат.")
             return all_items
 
-        page_number = 1
+        # Для продолжения сначала обязательно получаем канонический адрес
+        # обычного поиска после редиректа и применения фильтра. Только затем
+        # строим страницу, с которой пользователь попросил начать разбор.
+        if self.start_page > 1:
+            try:
+                state = await self._go_to_next_page(self.start_page)
+            except TimeoutError:
+                print(
+                    f"Страница {self.start_page} не открылась. "
+                    "Отдаём пустой результат."
+                )
+                return all_items
+            except (ConnectionError, ConnectionClosed, ProtocolError):
+                self.interrupted = True
+                print("Поисковая вкладка закрыта. Отдаём пустой результат.")
+                return all_items
+            if state is not PageState.READY:
+                self._print_stop(state, page_number=self.start_page, collected=0)
+                return all_items
+
+        page_number = self.start_page
+        parsed_pages = 0
         while True:
+            print(f"Начинаем парсить страницу {page_number}...")
             try:
                 page_items = await self.parse_current_page()
             except (ConnectionError, ConnectionClosed):
@@ -231,6 +257,7 @@ class BasePaginatedParser[T](ABC):
                 f"На странице {page_number} собрано элементов: {len(new_items)}"
             )
             all_items.extend(new_items)
+            parsed_pages += 1
 
             if not new_items:
                 print(
@@ -239,7 +266,7 @@ class BasePaginatedParser[T](ABC):
                 )
                 break
 
-            if self.number_pages is not None and page_number >= self.number_pages:
+            if self.number_pages is not None and parsed_pages >= self.number_pages:
                 break
 
             page_number += 1
