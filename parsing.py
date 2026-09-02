@@ -8,8 +8,15 @@ from parsek_cdp import Browser, Element, ElementState, Page, ProtocolError
 from websockets.exceptions import ConnectionClosed
 
 from base_parser import BasePaginatedParser, PageState
+from cdp_metrics import CDPMetrics
 from config import settings
 from domain import CardToPars, Stock
+from extractors import (
+    CardsExtraction,
+    PageProbe,
+    build_cards_extractor_script,
+    build_page_probe_script,
+)
 from utils import normalize_text
 
 # Вместо страницы сайт может отдать заглушку «запросы похожи на автоматические».
@@ -85,6 +92,7 @@ class MegamarketParsePage(BasePaginatedParser[CardToPars]):
             cards_poll_interval: float = CARDS_POLL_INTERVAL,
             cards_stable_checks: int = CARDS_STABLE_CHECKS,
             in_stock_only: bool = False,
+            cdp_metrics: CDPMetrics | None = None,
     ) -> None:
         # Совместимость с существующими вызовами и тестами ``page_delay=0``.
         if page_delay is not None:
@@ -100,6 +108,7 @@ class MegamarketParsePage(BasePaginatedParser[CardToPars]):
             long_pause_min=long_pause_min,
             long_pause_max=long_pause_max,
             navigation_timeout=captcha_timeout,
+            cdp_metrics=cdp_metrics,
         )
         self.number_items = number_items
         self.captcha_timeout = captcha_timeout
@@ -108,15 +117,24 @@ class MegamarketParsePage(BasePaginatedParser[CardToPars]):
         self.cards_poll_interval = cards_poll_interval
         self.cards_stable_checks = cards_stable_checks
         self.in_stock_only = in_stock_only
+        self._page_probe_script = build_page_probe_script(
+            card_selector=self.CARD_SELECTOR,
+            not_found_selector=self.NOT_FOUND_SELECTOR,
+            block_marker_selector=BLOCKED_SELECTOR,
+        )
+        self._cards_extractor_script = build_cards_extractor_script(
+            card_selector=self.CARD_SELECTOR,
+            title_selector=self.TITLE_SELECTOR,
+            price_selector=self.PRICE_SELECTOR,
+            seller_selector=self.SELLER_SELECTOR,
+            image_selector=self.IMAGE_SELECTOR,
+        )
+        self._last_probe = PageProbe()
 
     @property
     def is_brand_page(self) -> bool:
         """Перенаправил ли поиск на каталог конкретного бренда."""
         return is_brand_page_url(self._search_page_url)
-
-    @property
-    def _page_ready_selector(self) -> str:
-        return f"{self.CARD_SELECTOR}, {self.NOT_FOUND_SELECTOR}, {BLOCKED_SELECTOR}"
 
     def build_search_url(self, query: str) -> str:
         return f"{settings.base_url}/catalog/?q={quote(query)}"
@@ -209,96 +227,72 @@ class MegamarketParsePage(BasePaginatedParser[CardToPars]):
             await self.wait_content_ready()
         return state
 
-    @staticmethod
-    async def _get_text(element: Element, selector: str) -> str:
-        child = await element.query_selector(selector)
-        if child is None:
-            return ""
-        text = await child.apply("function () { return this.textContent || ''; }")
-        return normalize_text(text or "")
-
-    @staticmethod
-    async def _get_attribute(
-            element: Element,
-            selector: str,
-            attribute: str,
-    ) -> str:
-        child = await element.query_selector(selector)
-        if child is None:
-            return ""
-        return child.attributes.get(attribute, "")
-
-    @classmethod
-    async def _get_card_link(cls, card_element: Element) -> str:
-        href = await cls._get_attribute(
-            card_element,
-            cls.TITLE_SELECTOR,
-            "href",
-        )
-        return urljoin(settings.base_url, href) if href else ""
-
-    async def _parse_card(self, card_element: Element) -> CardToPars | None:
-        card_link = await self._get_card_link(card_element)
-        if not card_link:
-            return None
-
-        card = CardToPars(
-            title=await self._get_text(card_element, self.TITLE_SELECTOR),
-            price=await self._get_text(card_element, self.PRICE_SELECTOR),
-            seller=await self._get_text(card_element, self.SELLER_SELECTOR),
-            card_link=card_link,
-            image_link=await self._get_attribute(
-                card_element,
-                self.IMAGE_SELECTOR,
-                "content",
-            ),
-            # Основной запуск собирает выдачу уже с фильтром «В наличии».
-            stock=Stock.IN_STOCK,
-        )
-        # Цену не требуем: у некоторых карточек она может появиться позже.
-        if not (card.title and card.seller):
-            return None
-
-        return card
-
     async def parse_current_page(self) -> list[CardToPars]:
-        """Разобрать все карточки открытой страницы выдачи."""
-        cards: list[CardToPars] = []
-        async with self.page.domain_enabled(self.page.cdp.DOM):
-            selected_cards = await self.page.select_all(self.CARD_SELECTOR)
-            if self.number_items is not None:
-                selected_cards = selected_cards[: self.number_items]
+        """Получить все карточки выдачи одним Runtime.evaluate."""
+        raw_result = await self.page.evaluate(self._cards_extractor_script)
+        extraction = CardsExtraction.from_raw(raw_result)
+        if extraction.total == 0:
+            print(
+                "Экстрактор увидел 0 карточек. "
+                f"Селектор: {self.CARD_SELECTOR}"
+            )
 
-            for card_element in selected_cards:
-                card = await self._parse_card(card_element)
-                if card is not None:
-                    cards.append(card)
+        items = extraction.items
+        if self.number_items is not None:
+            items = items[:self.number_items]
+
+        cards: list[CardToPars] = []
+        for item in items:
+            if not item.href:
+                continue
+            card_link = urljoin(settings.base_url, item.href)
+            if not (item.title and item.seller):
+                continue
+            cards.append(
+                CardToPars(
+                    title=item.title,
+                    price=item.price,
+                    seller=item.seller,
+                    card_link=card_link,
+                    image_link=item.image,
+                    # Основной запуск собирает выдачу с фильтром «В наличии».
+                    stock=Stock.IN_STOCK,
+                )
+            )
 
         return cards
 
+    async def _probe_page(self) -> PageProbe:
+        raw_probe = await self.page.evaluate(self._page_probe_script)
+        self._last_probe = PageProbe.from_raw(raw_probe)
+        return self._last_probe
+
+    async def _current_url(self) -> str:
+        """Получить URL из той же единой пробы состояния страницы."""
+        return (await self._probe_page()).href
+
     async def wait_page_state(self) -> PageState:
-        await self.page.wait_for_selector(
-            self._page_ready_selector,
-            state=ElementState.ATTACHED,
-            timeout=self.captcha_timeout,
-        )
+        """Дождаться карточек, пустой выдачи или заглушки одной JS-пробой."""
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self.captcha_timeout
 
-        if await self._is_blocked():
-            return PageState.BLOCKED
-        if await self._is_not_found_page():
-            return PageState.NOT_FOUND
-        return PageState.READY
-
-    async def _is_blocked(self) -> bool:
-        return await is_blocked_page(self.page)
-
-    async def _is_not_found_page(self) -> bool:
-        return (
-                await self.page.select(selector=self.NOT_FOUND_SELECTOR) is not None
-        )
-
-    async def _card_count(self) -> int:
-        return len(await self.page.select_all(self.CARD_SELECTOR))
+        while True:
+            try:
+                probe = await self._probe_page()
+            except ProtocolError:
+                if loop.time() >= deadline:
+                    raise TimeoutError
+                await asyncio.sleep(self.cards_poll_interval)
+                continue
+            if BLOCKED_HEADING in probe.heading.casefold():
+                return PageState.BLOCKED
+            if probe.not_found:
+                return PageState.NOT_FOUND
+            if probe.cards > 0:
+                return PageState.READY
+            if loop.time() >= deadline:
+                raise TimeoutError
+            await asyncio.sleep(self.cards_poll_interval)
 
     async def wait_content_ready(self) -> None:
         """Дождаться стабилизации числа карточек открытой страницы."""
@@ -309,7 +303,7 @@ class MegamarketParsePage(BasePaginatedParser[CardToPars]):
 
         while True:
             try:
-                current_count = await self._card_count()
+                current_count = (await self._probe_page()).cards
             except ProtocolError:
                 current_count = -1
 

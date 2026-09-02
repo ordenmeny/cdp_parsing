@@ -8,6 +8,7 @@ from parsek_cdp import Page, ProtocolError
 from websockets.exceptions import ConnectionClosed
 
 import utils
+from cdp_metrics import CDPMetrics
 
 
 class PageState(StrEnum):
@@ -35,6 +36,7 @@ class BasePaginatedParser[T](ABC):
             long_pause_min: int,
             long_pause_max: int,
             navigation_timeout: float,
+            cdp_metrics: CDPMetrics | None = None,
     ) -> None:
         if start_page < 1:
             raise ValueError("Номер начальной страницы должен быть не меньше 1.")
@@ -49,6 +51,7 @@ class BasePaginatedParser[T](ABC):
         self.long_pause_min = long_pause_min
         self.long_pause_max = long_pause_max
         self.navigation_timeout = navigation_timeout
+        self.cdp_metrics = cdp_metrics
 
         self._search_page_url = ""
         self._seen_item_keys: set[Hashable] = set()
@@ -77,6 +80,19 @@ class BasePaginatedParser[T](ABC):
     @abstractmethod
     def item_key(self, item: T) -> Hashable:
         """Вернуть устойчивый ключ элемента для дедупликации."""
+
+    async def _parse_current_page_measured(self, page_number: int) -> list[T]:
+        if self.cdp_metrics is None:
+            return await self.parse_current_page()
+
+        before = self.cdp_metrics.snapshot()
+        try:
+            return await self.parse_current_page()
+        finally:
+            self.cdp_metrics.print_summary(
+                f"разбор страницы {page_number}",
+                since=before,
+            )
 
     async def prepare_first_page(self) -> PageState:
         """При необходимости подготовить первую страницу перед разбором."""
@@ -109,12 +125,16 @@ class BasePaginatedParser[T](ABC):
         deadline = loop.time() + min(self.navigation_timeout, 30.0)
 
         while True:
-            actual = await self._current_url()
+            try:
+                actual = await self._current_url()
+            except ProtocolError:
+                # Во время смены документа execution context кратко недоступен.
+                actual = ""
             if self._same_navigation_url(actual, expected):
                 return actual
             if loop.time() >= deadline:
                 raise TimeoutError
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(0.5)
 
     async def _open_search(self, query: str) -> PageState:
         url = self.build_search_url(query)
@@ -287,7 +307,7 @@ class BasePaginatedParser[T](ABC):
         while True:
             print(f"Начинаем парсить страницу {page_number}...")
             try:
-                page_items = await self.parse_current_page()
+                page_items = await self._parse_current_page_measured(page_number)
             except (ConnectionError, ConnectionClosed):
                 self.interrupted = True
                 print(

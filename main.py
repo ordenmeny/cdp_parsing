@@ -4,6 +4,7 @@ from parsek_cdp import Browser, ProtocolError
 from websockets.exceptions import ConnectionClosed
 
 import utils
+from cdp_metrics import collect_cdp_metrics
 from config import settings
 from domain import CardToPars, Stock
 from parsek_compat import install_parsek_target_race_fix
@@ -53,12 +54,14 @@ async def main() -> None:
         page = await browser.new_page()
         print("Вкладка для парсинга создана.")
         try:
-            in_stock_parser = MegamarketParsePage(
-                page,
-                in_stock_only=True,
-                start_page=command.start_page,
-            )
-            in_stock_cards = await in_stock_parser.parse(query)
+            with collect_cdp_metrics(settings.cdp_metrics) as metrics:
+                in_stock_parser = MegamarketParsePage(
+                    page,
+                    in_stock_only=True,
+                    start_page=command.start_page,
+                    cdp_metrics=metrics,
+                )
+                in_stock_cards = await in_stock_parser.parse(query)
             set_sellers_links(in_stock_cards)
         finally:
             if not in_stock_parser.interrupted:

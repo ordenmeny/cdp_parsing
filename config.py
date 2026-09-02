@@ -25,7 +25,8 @@ class Settings(BaseSettings):
     base_url: str = "https://megamarket.ru"
 
     browser_host: str = "127.0.0.1"
-    browser_port: int = 52222
+    browser_port: int = 51112
+    cdp_metrics: bool = False
 
     # Сколько собирать. None — пока сайт отдаёт результаты.
     number_pages: int | None = None  # страниц выдачи
