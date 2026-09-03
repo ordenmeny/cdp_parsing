@@ -36,12 +36,18 @@ class BasePaginatedParser[T](ABC):
             long_pause_min: int,
             long_pause_max: int,
             navigation_timeout: float,
+            repeat_pages_limit: int = 2,
+            repeat_new_share: float = 0.25,
             cdp_metrics: CDPMetrics | None = None,
     ) -> None:
         if start_page < 1:
             raise ValueError("Номер начальной страницы должен быть не меньше 1.")
         if long_pause_every_pages < 1:
             raise ValueError("Интервал длинной паузы должен быть не меньше 1.")
+        if repeat_pages_limit < 1:
+            raise ValueError("Предел повторов должен быть не меньше 1.")
+        if not 0 <= repeat_new_share <= 1:
+            raise ValueError("Доля новых элементов должна быть от 0 до 1.")
         self.page = page
         self.number_pages = number_pages
         self.start_page = start_page
@@ -51,10 +57,15 @@ class BasePaginatedParser[T](ABC):
         self.long_pause_min = long_pause_min
         self.long_pause_max = long_pause_max
         self.navigation_timeout = navigation_timeout
+        self.repeat_pages_limit = repeat_pages_limit
+        self.repeat_new_share = repeat_new_share
         self.cdp_metrics = cdp_metrics
 
         self._search_page_url = ""
         self._seen_item_keys: set[Hashable] = set()
+        # Прирост новых элементов по страницам текущего прогона: с ним
+        # сравниваем, чтобы отличить кольцо выдачи от нормального сбора.
+        self._new_item_counts: list[int] = []
         self.interrupted = False
 
     @abstractmethod
@@ -227,6 +238,30 @@ class BasePaginatedParser[T](ABC):
             result.append(item)
         return result
 
+    def _is_repeat_page(
+            self,
+            page_items: Sequence[T],
+            new_items: Sequence[T],
+    ) -> bool:
+        """Повторяет ли страница уже собранное.
+
+        Дойдя до конца выдачи, сайт может начать её сначала: после 64-й
+        страницы отдать вторую. Точного совпадения при этом не будет — цены и
+        наличие успевают измениться, — поэтому сравниваем не содержимое, а
+        прирост: сколько новых элементов дала страница против обычного для
+        этого прогона. Долю от размера страницы брать нельзя — на
+        накопительной выдаче она падает сама собой, хотя сбор идёт нормально.
+        """
+        if not page_items:
+            return True
+        if not new_items:
+            return True
+        self._new_item_counts.append(len(new_items))
+        # Первую страницу прогона за эталон не берём: при продолжении с
+        # середины она приносит начало списка разом и завысила бы норму.
+        baseline = max(self._new_item_counts[1:], default=0)
+        return len(new_items) < self.repeat_new_share * baseline
+
     @staticmethod
     def _print_stop(state: PageState, page_number: int, collected: int) -> None:
         if state is PageState.BLOCKED:
@@ -245,6 +280,7 @@ class BasePaginatedParser[T](ABC):
         all_items: list[T] = []
         self._search_page_url = ""
         self._seen_item_keys.clear()
+        self._new_item_counts.clear()
         self.interrupted = False
 
         if self.number_pages is not None and self.number_pages < 1:
@@ -304,6 +340,7 @@ class BasePaginatedParser[T](ABC):
 
         page_number = self.start_page
         parsed_pages = 0
+        repeated_pages = 0
         while True:
             print(f"Начинаем парсить страницу {page_number}...")
             try:
@@ -330,12 +367,22 @@ class BasePaginatedParser[T](ABC):
             all_items.extend(new_items)
             parsed_pages += 1
 
-            if not new_items:
+            if self._is_repeat_page(page_items, new_items):
+                repeated_pages += 1
                 print(
-                    f"На странице {page_number} нет новых элементов. "
-                    "Останавливаемся."
+                    f"На странице {page_number} новых элементов "
+                    f"{len(new_items)} из {len(page_items)}: выдача повторяет "
+                    f"собранное ({repeated_pages} подряд из "
+                    f"{self.repeat_pages_limit})."
                 )
-                break
+                if repeated_pages >= self.repeat_pages_limit:
+                    print(
+                        "Похоже, выдача пошла по кругу. Останавливаемся, "
+                        f"элементов: {len(all_items)}."
+                    )
+                    break
+            else:
+                repeated_pages = 0
 
             if self.number_pages is not None and parsed_pages >= self.number_pages:
                 break

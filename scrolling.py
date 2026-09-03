@@ -151,6 +151,7 @@ class MegamarketScrollPage(MegamarketParsePage):
         all_items: list[CardToPars] = []
         self._search_page_url = ""
         self._seen_item_keys.clear()
+        self._new_item_counts.clear()
         self.interrupted = False
 
         if self.number_clicks is not None and self.number_clicks < 0:
@@ -173,6 +174,7 @@ class MegamarketScrollPage(MegamarketParsePage):
             return all_items
 
         clicks = 0
+        repeated_loads = 0
         while True:
             print(f"Разбираем выдачу после {clicks} догрузок...")
             try:
@@ -198,6 +200,23 @@ class MegamarketScrollPage(MegamarketParsePage):
                 f"Новых элементов: {len(new_items)}. "
                 f"Всего собрано: {len(all_items)}."
             )
+
+            # Признак кольца тот же, что и при обходе страниц: прирост
+            # заметно меньше обычного для этого прогона.
+            if self._is_repeat_page(items, new_items):
+                repeated_loads += 1
+                print(
+                    "Догрузка не принесла новых элементов "
+                    f"({repeated_loads} подряд из {self.repeat_pages_limit})."
+                )
+                if repeated_loads >= self.repeat_pages_limit:
+                    print(
+                        "Похоже, выдача пошла по кругу. Останавливаемся, "
+                        f"элементов: {len(all_items)}."
+                    )
+                    break
+            else:
+                repeated_loads = 0
 
             if self.number_clicks is not None and clicks >= self.number_clicks:
                 print(f"Достигнут предел догрузок: {self.number_clicks}.")

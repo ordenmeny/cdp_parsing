@@ -87,6 +87,8 @@ class MegamarketParsePage(BasePaginatedParser[CardToPars]):
             long_pause_every_pages: int = settings.long_pause_every_pages,
             long_pause_min: int = settings.long_pause_min,
             long_pause_max: int = settings.long_pause_max,
+            repeat_pages_limit: int = settings.repeat_pages_limit,
+            repeat_new_share: float = settings.repeat_new_share,
             page_delay: int | None = None,
             cards_load_timeout: float = CARDS_LOAD_TIMEOUT,
             cards_poll_interval: float = CARDS_POLL_INTERVAL,
@@ -108,6 +110,8 @@ class MegamarketParsePage(BasePaginatedParser[CardToPars]):
             long_pause_min=long_pause_min,
             long_pause_max=long_pause_max,
             navigation_timeout=captcha_timeout,
+            repeat_pages_limit=repeat_pages_limit,
+            repeat_new_share=repeat_new_share,
             cdp_metrics=cdp_metrics,
         )
         self.number_items = number_items

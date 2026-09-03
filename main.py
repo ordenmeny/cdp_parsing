@@ -98,15 +98,25 @@ async def main() -> None:
                 ):
                     pass
 
-        added_sellers = add_new_sellers_from_cards(in_stock_cards)
-        print(f"Добавлено новых продавцов в базу: {added_sellers}.")
-
         report = ExcelReport(
             in_stock_cards,
             model=CardToPars,
             query=query,
         )
         output_path = report.save()
+
+        # База продавцов — побочный продукт прогона, и её файл правят руками:
+        # дубль строки или «||» в названии роняют разбор всей базы. Отчёт к
+        # этому моменту уже на диске, и ошибка базы его не обесценивает.
+        try:
+            added_sellers = add_new_sellers_from_cards(in_stock_cards)
+        except (ValueError, OSError) as error:
+            print(
+                f"Не удалось обновить базу продавцов: {error} "
+                f"Отчёт это не затронуло: {output_path.name}."
+            )
+        else:
+            print(f"Добавлено новых продавцов в базу: {added_sellers}.")
 
         # print_cards(in_stock_cards)
 
