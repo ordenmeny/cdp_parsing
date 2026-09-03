@@ -32,19 +32,22 @@ class Settings(BaseSettings):
     number_pages: int | None = None  # страниц выдачи
     number_items: int | None = None # карточек с одной страницы
     number_visits: int | None = None  # заходов в карточки за продавцами
+    number_clicks: int | None = None  # нажатий «Показать ещё» при scrolling
 
     captcha_timeout: int = 300
     # Обычный элемент фильтра должен появиться и переключиться быстро.
     filter_timeout: int = 15
     # Окно продавца на карточке: раскрывается сразу или не раскроется вовсе.
     popover_timeout: int = 10
+    # Сколько ждать прироста карточек после нажатия «Показать ещё».
+    more_button_timeout: int = 30
 
     # Паузы между переходами.
-    page_delay_min: NonNegativeInt = 15
-    page_delay_max: NonNegativeInt = 25
+    page_delay_min: NonNegativeInt = 5
+    page_delay_max: NonNegativeInt = 10
     long_pause_every_pages: PositiveInt = 4
-    long_pause_min: NonNegativeInt = 2 * 60
-    long_pause_max: NonNegativeInt = 160
+    long_pause_min: NonNegativeInt = 10
+    long_pause_max: NonNegativeInt = 11
     card_delay: NonNegativeFloat = 7
     card_close_delay: NonNegativeFloat = 8
 

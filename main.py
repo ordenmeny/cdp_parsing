@@ -13,6 +13,7 @@ from parsing import (
     MegamarketParsePage,
 )
 from report import ExcelReport, join_excel_reports
+from scrolling import MegamarketScrollPage
 from sellers import add_new_sellers_from_cards
 from slug import SlugifyCard
 from utils import print_cards
@@ -35,6 +36,30 @@ async def connect_browser(endpoint: str) -> Browser:
     return browser
 
 
+def build_parser(
+        page,
+        command: utils.InputCommand,
+        metrics,
+) -> MegamarketParsePage:
+    """Выбрать поток сбора по введённой команде.
+
+    Потоки не смешиваются: ``scrolling||запрос`` набирает выдачу догрузкой в
+    одном документе, обычный запрос — обходом страниц ``page-N``.
+    """
+    if isinstance(command, utils.ScrollCommand):
+        return MegamarketScrollPage(
+            page,
+            in_stock_only=True,
+            cdp_metrics=metrics,
+        )
+    return MegamarketParsePage(
+        page,
+        in_stock_only=True,
+        start_page=command.start_page,
+        cdp_metrics=metrics,
+    )
+
+
 def set_sellers_links(cards: list[CardToPars]) -> None:
     """Сформировать ссылки продавцов из слагифицированных названий."""
     SlugifyCard(cards).set_sellers_slugs()
@@ -53,18 +78,16 @@ async def main() -> None:
         print("Создаём вкладку для парсинга...")
         page = await browser.new_page()
         print("Вкладка для парсинга создана.")
+        # Парсер может не создаться: тогда закрывать вкладку всё равно надо,
+        # а спрашивать у несуществующего объекта про прерывание — нет.
+        in_stock_parser = None
         try:
             with collect_cdp_metrics(settings.cdp_metrics) as metrics:
-                in_stock_parser = MegamarketParsePage(
-                    page,
-                    in_stock_only=True,
-                    start_page=command.start_page,
-                    cdp_metrics=metrics,
-                )
+                in_stock_parser = build_parser(page, command, metrics)
                 in_stock_cards = await in_stock_parser.parse(query)
             set_sellers_links(in_stock_cards)
         finally:
-            if not in_stock_parser.interrupted:
+            if in_stock_parser is None or not in_stock_parser.interrupted:
                 try:
                     await asyncio.wait_for(page.cdp.Page.close(), timeout=2)
                 except (

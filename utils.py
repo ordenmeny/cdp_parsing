@@ -40,18 +40,27 @@ class ParseCommand:
 
 
 @dataclass(frozen=True, slots=True)
+class ScrollCommand:
+    """Сбор без перехода по страницам: догрузка «Показать ещё» на месте."""
+
+    query: str
+
+
+@dataclass(frozen=True, slots=True)
 class JoinCommand:
     directory: Path
 
 
-type InputCommand = ParseCommand | JoinCommand
+type InputCommand = ParseCommand | ScrollCommand | JoinCommand
 
 
 def parse_input_command(value: str) -> InputCommand:
     """Разобрать поисковый запрос, продолжение или команду объединения."""
     value = value.strip()
     if not value:
-        raise ValueError("Введите поисковый запрос или команду join||<папка>.")
+        raise ValueError(
+            "Введите поисковый запрос, scrolling||<запрос> или join||<папка>."
+        )
 
     head, separator, tail = value.partition("||")
     if not separator:
@@ -65,6 +74,14 @@ def parse_input_command(value: str) -> InputCommand:
             raise ValueError("После join|| укажите путь до папки с отчётами.")
         return JoinCommand(directory=Path(path).expanduser())
 
+    if head.casefold() == "scrolling":
+        # Всё после разделителя — сам запрос: номер страницы этому потоку
+        # не нужен, а «||» внутри запроса встречаться не должен.
+        query = tail.strip('"')
+        if not query:
+            raise ValueError("После scrolling|| укажите поисковый запрос.")
+        return ScrollCommand(query=query)
+
     if not head:
         raise ValueError("Перед || должен быть поисковый запрос.")
     if not tail.isdecimal() or int(tail) < 1:
@@ -75,7 +92,9 @@ def parse_input_command(value: str) -> InputCommand:
 def read_command() -> InputCommand:
     """Запрашивать команду, пока пользователь не введёт корректное значение."""
     while True:
-        entered = input("Запрос[||страница] или join||<папка>: ")
+        entered = input(
+            "Запрос[||страница], scrolling||<запрос> или join||<папка>: "
+        )
         try:
             return parse_input_command(entered)
         except ValueError as error:
