@@ -6,7 +6,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 from pydantic import BaseModel
 
-from config import settings
+from megamarket.config import settings
 
 
 def normalize_text(value: str) -> str:
@@ -19,9 +19,9 @@ def get_random_delay(
 ) -> int:
     """Вернуть случайную задержку из настроенного диапазона."""
     if min_seconds is None:
-        min_seconds = settings.page_delay_min
+        min_seconds = settings.parser.page_delay_min
     if max_seconds is None:
-        max_seconds = settings.page_delay_max
+        max_seconds = settings.parser.page_delay_max
     if min_seconds < 0 or max_seconds < 0:
         raise ValueError("Время ожидания не может быть отрицательным.")
     if min_seconds > max_seconds:

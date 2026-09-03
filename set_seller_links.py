@@ -4,10 +4,10 @@ from pathlib import Path
 
 from parsek_cdp import Browser
 
-from config import settings
-from parsek_compat import install_parsek_target_race_fix
-from parsing import MegamarketParseCard
-from report import ExcelCardsReport
+from megamarket.config import settings
+from megamarket.cdp.parsek_compat import install_parsek_target_race_fix
+from megamarket.parsers.parsing import MegamarketParseCard
+from megamarket.storage.report import ExcelCardsReport
 
 
 async def connect_browser(endpoint: str) -> Browser:

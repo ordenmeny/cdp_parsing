@@ -15,11 +15,11 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from base_parser import PageState  # noqa: E402
-from cdp_metrics import collect_cdp_metrics  # noqa: E402
-from config import settings  # noqa: E402
+from megamarket.parsers.base_parser import PageState  # noqa: E402
+from megamarket.cdp.cdp_metrics import collect_cdp_metrics  # noqa: E402
+from megamarket.config import settings  # noqa: E402
 from main import connect_browser  # noqa: E402
-from parsing import MegamarketParsePage  # noqa: E402
+from megamarket.parsers.parsing import MegamarketParsePage  # noqa: E402
 
 
 def build_fixture(card_count: int) -> bytes:

@@ -4,9 +4,9 @@
 import re
 import unicodedata
 
-from domain import CardToPars
+from megamarket.domain import CardToPars
 
-from config import settings
+from megamarket.config import settings
 
 _CYRILLIC_TO_LATIN = str.maketrans(
     {

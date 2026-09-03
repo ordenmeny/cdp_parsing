@@ -77,3 +77,121 @@ uv run python main.py
 **7. Экстренная остановка сбора**
 Если нужно сохранить уже собранные данные, необходимо закрыть вкладку браузера.
 Терминал не трогать до тех пор, пока процесс не остановится штатно.
+
+
+
+Поля Sellers:
+seller_id - id продавца 
+name: str (unique)
+link_to_seller: str (unique)
+link_to_card: str (любая ссылка на товар)
+status: "confirmed", "unconfirmed", "incorrect"
+email: str
+orgn: str
+official_name: str
+
+
+id продавца получаем из нормализованной ссылки normalize_link (megamarket/utils.py),
+например, https://megamarket.ru/catalog/details/zu-greenworks-2945107-100031211934_13635
+Здесь id продавца 13635.
+
+
+Во время первоначального сбора получаем список из объектов селлеров (sellers).
+Парсер проверяет, есть ли селлер в sellers.
+Если ДА:
+    Если статус confirmed: парсер устанавливает в CardToPars seller_link.
+    Если статус другой: парсер не устанавливает в CardToPars seller_link, поле в excel пустое.
+
+Если НЕТ:
+    ----------------------------
+    Заносится в БД новый объект Sellers.
+    link_to_seller - через класс SlugifyCard создается слаг
+    name, link_to_card
+    status - unconfirmed
+    inn
+    mobile
+    rating
+    --------------------------
+
+
+! В excel файл помечает только ссылки селлеров, которые confirmed. Если ссылка не confirmed, то в файле пусто.
+
+
+API (define_sellers, на вход может поступить excel):
+Сначала добавляем в БД всех новых селлеров из excel файла, если он пришел на вход.
+После этого начинается процесс определения статусов:
+Выбираем из БД всех селлеров, у которых статус unconfirmed.
+Делаем парсинг страниц этих селлеров:
+    Если страница 404 по этой ссылке - в БД помечаем поле селлера как incorrect.
+    Если ссылка ведет не на 404, а на страницу продавца - парсим данные о продавце.
+        Заносим данные об этом продавце в БД. Помечаем статус как confirmed.
+        Если есть excel-файл, то устанавливаем для этого продавца ссылку, если она confirmed.
+
+
+API (get_sellers)
+Через query-параметр можно передать "confirmed", "unconfirmed", "incorrect" 
+и сделать фильтр по этому параметру. Если query-параметра нет, получаем всех продавцов.
+
+API PATCH (set_sellers)
+Можно передать один или несколько селлеров с определенными параметрами.
+Можно передать, например, правильную ссылку или статус.
+Идентифицировать селлера можно либо по id, либо по name.
+
+
+**7. Структура проекта**
+
+```
+main.py                     точка входа: поиск, scrolling, join
+set_seller_links.py         точка входа: дополнить готовый отчёт ссылками продавцов
+megamarket/
+├── config.py               Settings (окружение) и ParserSettings (как собирать)
+├── domain.py               модели данных: CardToPars, Stock
+├── exceptions.py
+├── utils.py                разбор введённой команды и текстовые помощники
+├── slug.py                 ссылка продавца из названия
+├── cdp/                    слой браузера
+│   ├── cdp_metrics.py      подсчёт CDP-вызовов
+│   ├── extractors.py       JS-экстракторы карточек и состояния страницы
+│   └── parsek_compat.py    заплатки к parsek-cdp
+├── parsers/                сбор выдачи
+│   ├── base_parser.py      общий поток постраничного обхода
+│   ├── parsing.py          MegamarketParsePage, MegamarketParseCard
+│   └── scrolling.py        MegamarketScrollPage — догрузка «Показать ещё»
+└── storage/                результат
+    └── report.py           ExcelReport, join_excel_reports, ExcelCardsReport
+scripts/measure_cdp.py      замер CDP-нагрузки на локальной странице
+output/                     отчёты
+```
+
+Импорты внутри пакета абсолютные: `from megamarket.domain import CardToPars`.
+Пакет можно импортировать, не запуская парсер, — модели, настройки и база
+продавцов не тянут за собой браузер.
+
+
+Пример использования:
+```python
+import asyncio
+
+from main import connect_browser
+from megamarket.config import settings
+from megamarket.exceptions import SiteBlocked
+from megamarket.parsers.seller_page import MegamarketSellerPage, SellerPageState
+
+
+async def main():
+    browser = await connect_browser(settings.browser_endpoint)
+    pages = MegamarketSellerPage(browser)
+
+    result = await pages.parse("https://megamarket.ru/shop/a-pole/")
+
+    match result.state:
+        case SellerPageState.FOUND:
+            print(result.info.official_name, result.info.ogrn, result.info.email)
+        case SellerPageState.NOT_FOUND:
+            print("такого магазина нет")
+        case SellerPageState.UNKNOWN:
+            print("страница не ответила — ссылку не судим")
+
+
+asyncio.run(main())
+```

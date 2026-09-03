@@ -7,8 +7,8 @@ from urllib.parse import urlsplit
 from parsek_cdp import Page, ProtocolError
 from websockets.exceptions import ConnectionClosed
 
-import utils
-from cdp_metrics import CDPMetrics
+from megamarket import utils
+from megamarket.cdp.cdp_metrics import CDPMetrics
 
 
 class PageState(StrEnum):

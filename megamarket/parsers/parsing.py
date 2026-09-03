@@ -7,17 +7,17 @@ from urllib.parse import parse_qs, quote, urljoin, urlsplit, urlunsplit
 from parsek_cdp import Browser, Element, ElementState, Page, ProtocolError
 from websockets.exceptions import ConnectionClosed
 
-from base_parser import BasePaginatedParser, PageState
-from cdp_metrics import CDPMetrics
-from config import settings
-from domain import CardToPars, Stock
-from extractors import (
+from megamarket.parsers.base_parser import BasePaginatedParser, PageState
+from megamarket.cdp.cdp_metrics import CDPMetrics
+from megamarket.config import settings
+from megamarket.domain import CardToPars, Stock
+from megamarket.cdp.extractors import (
     CardsExtraction,
     PageProbe,
     build_cards_extractor_script,
     build_page_probe_script,
 )
-from utils import normalize_text
+from megamarket.utils import normalize_text
 
 # Вместо страницы сайт может отдать заглушку «запросы похожи на автоматические».
 # Узнаём её по заголовку: он говорит об этом прямым текстом. Разметку заглушки
@@ -77,18 +77,18 @@ class MegamarketParsePage(BasePaginatedParser[CardToPars]):
             self,
             page: Page,
             *,
-            number_pages: int | None = settings.number_pages,
-            number_items: int | None = settings.number_items,
+            number_pages: int | None = settings.parser.number_pages,
+            number_items: int | None = settings.parser.number_items,
             start_page: int = 1,
-            captcha_timeout: float = settings.captcha_timeout,
-            filter_timeout: float = settings.filter_timeout,
-            page_delay_min: int = settings.page_delay_min,
-            page_delay_max: int = settings.page_delay_max,
-            long_pause_every_pages: int = settings.long_pause_every_pages,
-            long_pause_min: int = settings.long_pause_min,
-            long_pause_max: int = settings.long_pause_max,
-            repeat_pages_limit: int = settings.repeat_pages_limit,
-            repeat_new_share: float = settings.repeat_new_share,
+            captcha_timeout: float = settings.parser.captcha_timeout,
+            filter_timeout: float = settings.parser.filter_timeout,
+            page_delay_min: int = settings.parser.page_delay_min,
+            page_delay_max: int = settings.parser.page_delay_max,
+            long_pause_every_pages: int = settings.parser.long_pause_every_pages,
+            long_pause_min: int = settings.parser.long_pause_min,
+            long_pause_max: int = settings.parser.long_pause_max,
+            repeat_pages_limit: int = settings.parser.repeat_pages_limit,
+            repeat_new_share: float = settings.parser.repeat_new_share,
             page_delay: int | None = None,
             cards_load_timeout: float = CARDS_LOAD_TIMEOUT,
             cards_poll_interval: float = CARDS_POLL_INTERVAL,
@@ -346,11 +346,11 @@ class MegamarketParseCard:
             browser: Browser,
             cards: Sequence[CardToPars],
             *,
-            captcha_timeout: float = settings.captcha_timeout,
-            popover_timeout: float = settings.popover_timeout,
-            card_delay: float = settings.card_delay,
-            card_close_delay: float = settings.card_close_delay,
-            number_visits: int | None = settings.number_visits,
+            captcha_timeout: float = settings.parser.captcha_timeout,
+            popover_timeout: float = settings.parser.popover_timeout,
+            card_delay: float = settings.parser.card_delay,
+            card_close_delay: float = settings.parser.card_close_delay,
+            number_visits: int | None = settings.parser.number_visits,
     ) -> None:
         self.browser = browser
         self.cards = list(cards)

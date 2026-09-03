@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from pydantic import (
+    Field,
     NonNegativeFloat,
     NonNegativeInt,
     PositiveInt,
@@ -9,28 +10,22 @@ from pydantic import (
 )
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-BASE_DIR = Path(__file__).resolve().parent
+BASE_DIR = Path(__file__).resolve().parent.parent
+
+ENV_CONFIG = SettingsConfigDict(
+    env_prefix="PARSER_",
+    env_file=BASE_DIR / ".env",
+    env_file_encoding="utf-8",
+    extra="ignore",
+)
 
 
-class Settings(BaseSettings):
-    model_config = SettingsConfigDict(
-        env_prefix="PARSER_",
-        env_file=BASE_DIR / ".env",
-        env_file_encoding="utf-8",
-        extra="ignore",
-    )
-
-    report_dir: Path = BASE_DIR / "output"
-
-    base_url: str = "https://megamarket.ru"
-
-    browser_host: str = "127.0.0.1"
-    browser_port: int = 51112
-    cdp_metrics: bool = False
+class ParserSettings(BaseSettings):
+    model_config = ENV_CONFIG
 
     # Сколько собирать. None — пока сайт отдаёт результаты.
     number_pages: int | None = None  # страниц выдачи
-    number_items: int | None = None # карточек с одной страницы
+    number_items: int | None = None  # карточек с одной страницы
     number_visits: int | None = None  # заходов в карточки за продавцами
     number_clicks: int | None = None  # нажатий «Показать ещё» при scrolling
 
@@ -47,6 +42,8 @@ class Settings(BaseSettings):
     filter_timeout: int = 15
     # Окно продавца на карточке: раскрывается сразу или не раскроется вовсе.
     popover_timeout: int = 10
+    # Сколько ждать состояния страницы магазина после её загрузки.
+    seller_page_timeout: int = 30
     # Сколько ждать прироста карточек после нажатия «Показать ещё».
     more_button_timeout: int = 30
 
@@ -59,14 +56,8 @@ class Settings(BaseSettings):
     card_delay: NonNegativeFloat = 7
     card_close_delay: NonNegativeFloat = 8
 
-    @field_validator("base_url")
-    @classmethod
-    def _drop_trailing_slash(cls, value: str) -> str:
-        """Адреса склеиваем строками, поэтому хвостовой слеш только помешает."""
-        return value.rstrip("/")
-
     @model_validator(mode="after")
-    def _validate_page_delay_range(self):
+    def _validate_delay_ranges(self):
         if self.page_delay_min > self.page_delay_max:
             raise ValueError(
                 "PARSER_PAGE_DELAY_MIN не может быть больше "
@@ -79,6 +70,30 @@ class Settings(BaseSettings):
             )
         return self
 
+
+class Settings(BaseSettings):
+    """Окружение: куда складывать результат, какой сайт, какой браузер."""
+
+    model_config = ENV_CONFIG
+
+    report_dir: Path = BASE_DIR / "output"
+
+    base_url: str = "https://megamarket.ru"
+
+    browser_host: str = "127.0.0.1"
+    browser_port: int = 51112
+    cdp_metrics: bool = False
+
+    # Своя модель настроек, а не вложенное поле: имена переменных окружения
+    # остаются прежними (PARSER_NUMBER_PAGES, а не PARSER_PARSER__...).
+    parser: ParserSettings = Field(default_factory=ParserSettings)
+
+    @field_validator("base_url")
+    @classmethod
+    def _drop_trailing_slash(cls, value: str) -> str:
+        """Адреса склеиваем строками, поэтому хвостовой слеш только помешает."""
+        return value.rstrip("/")
+
     @property
     def browser_endpoint(self) -> str:
         """Адрес CDP уже запущенного браузера."""
@@ -86,3 +101,4 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+parser_settings = settings.parser

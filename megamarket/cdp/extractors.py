@@ -160,3 +160,84 @@ def build_cards_extractor_script(
     for placeholder, selector in replacements.items():
         script = script.replace(placeholder, json.dumps(selector))
     return script
+
+
+@dataclass(frozen=True, slots=True)
+class SellerState:
+    """Состояние страницы магазина, снятое одним ``Runtime.evaluate``."""
+
+    ready: bool = False
+    status_code: int = 0
+    merchant_id: str = ""
+    name: str = ""
+    slug: str = ""
+    official_name: str = ""
+    ogrn: str = ""
+    inn: str = ""
+    email: str = ""
+    phone: str = ""
+    legal_form: str = ""
+    address: str = ""
+    rating: float | None = None
+
+    @classmethod
+    def from_raw(cls, value: object) -> "SellerState":
+        if not isinstance(value, dict):
+            return cls()
+
+        def text(key: str) -> str:
+            return str(value.get(key) or "").strip()
+
+        try:
+            status_code = int(value.get("statusCode") or 0)
+        except (TypeError, ValueError):
+            status_code = 0
+
+        rating = value.get("rating")
+        return cls(
+            ready=bool(value.get("ready")),
+            status_code=status_code,
+            merchant_id=text("merchantId"),
+            name=text("name"),
+            slug=text("slug"),
+            official_name=text("officialName"),
+            ogrn=text("ogrn"),
+            inn=text("inn"),
+            email=text("email"),
+            phone=text("phone"),
+            legal_form=text("legalForm"),
+            address=text("address"),
+            rating=float(rating) if isinstance(rating, (int, float)) else None,
+        )
+
+
+# Магазин и его реквизиты SPA кладёт в состояние страницы, а несуществующий
+# адрес отмечает там же кодом ответа. Поэтому обе проверки — один вызов, и
+# разбирать вёрстку не нужно. Реквизиты дублируются во всплывающей подсказке
+# у названия магазина, но она появляется только при наведении мыши.
+SELLER_STATE_SCRIPT = r"""
+(() => {
+    const state = (window.__APP__ || {}).hydratorState || {};
+    const error = (state.ApplicationStore || {}).serverError;
+    const info = (state.MerchantStore || {}).merchantLegalInfo;
+    const legal = (info && info.legalInfo) || {};
+    return {
+        ready: Boolean(window.__APP__),
+        statusCode: error && error.statusCode ? error.statusCode : 0,
+        merchantId: info ? String(info.id || '') : '',
+        name: info ? String(info.name || '') : '',
+        slug: info ? String(info.slug || '') : '',
+        rating: info && typeof info.summaryRating === 'number'
+            ? info.summaryRating
+            : null,
+        officialName: String((info && info.fullName) || legal.name || ''),
+        // orgn — опечатка самого сайта; ogrn читаем на случай, если починят.
+        ogrn: String(legal.orgn || legal.ogrn || ''),
+        inn: String(legal.inn || ''),
+        email: String(legal.email || ''),
+        phone: String(legal.phone || ''),
+        legalForm: String(legal.form || ''),
+        address: String(legal.address || ''),
+    };
+})()
+"""

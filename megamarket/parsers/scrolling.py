@@ -11,11 +11,11 @@ import asyncio
 from parsek_cdp import Element, ProtocolError
 from websockets.exceptions import ConnectionClosed
 
-import utils
-from base_parser import PageState
-from config import settings
-from domain import CardToPars
-from parsing import BLOCKED_HEADING, BLOCKED_MESSAGE, MegamarketParsePage
+from megamarket import utils
+from megamarket.parsers.base_parser import PageState
+from megamarket.config import settings
+from megamarket.domain import CardToPars
+from megamarket.parsers.parsing import BLOCKED_HEADING, BLOCKED_MESSAGE, MegamarketParsePage
 
 
 class MegamarketScrollPage(MegamarketParsePage):
@@ -39,8 +39,8 @@ class MegamarketScrollPage(MegamarketParsePage):
             self,
             page,
             *,
-            number_clicks: int | None = settings.number_clicks,
-            more_button_timeout: float = settings.more_button_timeout,
+            number_clicks: int | None = settings.parser.number_clicks,
+            more_button_timeout: float = settings.parser.more_button_timeout,
             **kwargs,
     ) -> None:
         super().__init__(page, **kwargs)

@@ -3,20 +3,18 @@ import asyncio
 from parsek_cdp import Browser, ProtocolError
 from websockets.exceptions import ConnectionClosed
 
-import utils
-from cdp_metrics import collect_cdp_metrics
-from config import settings
-from domain import CardToPars, Stock
-from parsek_compat import install_parsek_target_race_fix
-from parsing import (
+from megamarket import utils
+from megamarket.cdp.cdp_metrics import collect_cdp_metrics
+from megamarket.config import settings
+from megamarket.domain import CardToPars, Stock
+from megamarket.cdp.parsek_compat import install_parsek_target_race_fix
+from megamarket.parsers.parsing import (
     MegamarketParseCard,
     MegamarketParsePage,
 )
-from report import ExcelReport, join_excel_reports
-from scrolling import MegamarketScrollPage
-from sellers import add_new_sellers_from_cards
-from slug import SlugifyCard
-from utils import print_cards
+from megamarket.storage.report import ExcelReport, join_excel_reports
+from megamarket.parsers.scrolling import MegamarketScrollPage
+from megamarket.utils import print_cards
 
 
 async def connect_browser(endpoint: str) -> Browser:
@@ -60,11 +58,6 @@ def build_parser(
     )
 
 
-def set_sellers_links(cards: list[CardToPars]) -> None:
-    """Сформировать ссылки продавцов из слагифицированных названий."""
-    SlugifyCard(cards).set_sellers_slugs()
-
-
 async def main() -> None:
     command = utils.read_command()
     if isinstance(command, utils.JoinCommand):
@@ -85,7 +78,6 @@ async def main() -> None:
             with collect_cdp_metrics(settings.cdp_metrics) as metrics:
                 in_stock_parser = build_parser(page, command, metrics)
                 in_stock_cards = await in_stock_parser.parse(query)
-            set_sellers_links(in_stock_cards)
         finally:
             if in_stock_parser is None or not in_stock_parser.interrupted:
                 try:
@@ -105,18 +97,8 @@ async def main() -> None:
         )
         output_path = report.save()
 
-        # База продавцов — побочный продукт прогона, и её файл правят руками:
-        # дубль строки или «||» в названии роняют разбор всей базы. Отчёт к
-        # этому моменту уже на диске, и ошибка базы его не обесценивает.
-        try:
-            added_sellers = add_new_sellers_from_cards(in_stock_cards)
-        except (ValueError, OSError) as error:
-            print(
-                f"Не удалось обновить базу продавцов: {error} "
-                f"Отчёт это не затронуло: {output_path.name}."
-            )
-        else:
-            print(f"Добавлено новых продавцов в базу: {added_sellers}.")
+        # Колонка со ссылкой продавца остаётся пустой: слагификатор её
+        # угадывал, а проверять догадки пока некому.
 
         # print_cards(in_stock_cards)
 

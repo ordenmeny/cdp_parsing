@@ -10,8 +10,8 @@ from openpyxl.styles import Font
 from openpyxl.utils import get_column_letter
 from pydantic import BaseModel
 
-from config import settings
-from domain import CardToPars
+from megamarket.config import settings
+from megamarket.domain import CardToPars
 
 
 class ExcelReport:
