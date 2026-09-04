@@ -264,11 +264,11 @@ class ExcelCardsReport:
                 if value not in (None, "")
             }
             data["seller_link"] = (
-                self.sheet.cell(
-                    row=row_number,
-                    column=self._seller_link_column,
-                ).value
-                or ""
+                    self.sheet.cell(
+                        row=row_number,
+                        column=self._seller_link_column,
+                    ).value
+                    or ""
             )
 
             try:
@@ -287,20 +287,28 @@ class ExcelCardsReport:
     def output_path(self) -> Path:
         return self.path.with_name(f"{self.path.stem}_with_seller_links.xlsx")
 
-    def save(self, path: str | Path | None = None) -> Path:
-        """Записать только новые ссылки, не меняя уже заполненные ячейки."""
+    def save(
+            self,
+            path: str | Path | None = None,
+            *,
+            replace_seller_links: bool = False,
+    ) -> Path:
+        """Сохранить отчёт, при необходимости заменив все ссылки продавцов."""
         target = Path(path).expanduser().resolve() if path else self.output_path
         target.parent.mkdir(parents=True, exist_ok=True)
 
         for row_number, card, original_link in self._rows:
-            if original_link or not card.seller_link:
+            if not replace_seller_links and (original_link or not card.seller_link):
                 continue
             self.sheet.cell(
                 row=row_number,
                 column=self._seller_link_column,
-                value=card.seller_link,
+                value=card.seller_link or None,
             )
 
         self.workbook.save(target)
         print(f"Отчёт со ссылками сохранён: {target} (строк: {len(self.cards)})")
         return target
+
+    def close(self) -> None:
+        self.workbook.close()

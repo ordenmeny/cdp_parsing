@@ -54,10 +54,14 @@ class SlugifyCard:
     def get_link(self, slug: str):
         return f'{settings.base_url}/shop/{slug}/'
 
+    @classmethod
+    def link_for_seller(cls, name: str) -> str:
+        """Сформировать предполагаемую ссылку магазина по имени продавца."""
+        return f"{settings.base_url}/shop/{cls._slugify(name)}/"
+
     def set_sellers_slugs(self):
         for i in self.cards:
-            slug = self._slugify(i.seller)
-            i.seller_link = self.get_link(slug)
+            i.seller_link = self.link_for_seller(i.seller)
 
     @staticmethod
     def _slugify(value: str) -> str:

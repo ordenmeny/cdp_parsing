@@ -101,7 +101,6 @@ def read_command() -> InputCommand:
             print(f"Ошибка ввода: {error}")
 
 
-
 def print_cards(cards: Sequence[BaseModel]) -> None:
     """Печатает поля модели в порядке объявления, первое — в строке с номером."""
     print(f"Собрано карточек: {len(cards)}")
@@ -113,17 +112,26 @@ def print_cards(cards: Sequence[BaseModel]) -> None:
 
 
 def normalize_link(link: str) -> str:
-    """Возвращает уникальный slug карточки товара из ссылки Megamarket."""
+    """Вернуть идентификатор продавца из ссылки на карточку Megamarket."""
     parts = urlsplit(link.strip())
     if parts.scheme != "https" or not parts.netloc:
         raise ValueError("Ожидалась абсолютная ссылка, начинающаяся с https://")
 
+    params = parse_qs(parts.query) | parse_qs(parts.fragment.lstrip("#?"))
+    for name in ("merchantId", "exclusiveMerchantId"):
+        values = params.get(name)
+        if values and values[0].isdecimal() and int(values[0]) > 0:
+            return values[0]
+
     path_parts = [unquote(part) for part in parts.path.split("/") if part]
     if path_parts[:2] == ["catalog", "details"] and len(path_parts) == 3:
-        return path_parts[-1]
+        slug = path_parts[-1]
+    elif path_parts[:2] == ["promo-page", "details"] and params.get("slug"):
+        slug = params["slug"][0]
+    else:
+        raise ValueError("Не удалось определить карточку товара")
 
-    params = parse_qs(parts.query) | parse_qs(parts.fragment.lstrip("?"))
-    if path_parts[:2] == ["promo-page", "details"] and params.get("slug"):
-        return params["slug"][0]
-
-    raise ValueError("Не удалось определить идентификатор карточки товара")
+    _, separator, seller_id = slug.rpartition("_")
+    if separator and seller_id.isdecimal() and int(seller_id) > 0:
+        return seller_id
+    raise ValueError("Не удалось определить идентификатор продавца")

@@ -211,19 +211,41 @@ class SellerState:
         )
 
 
-# Магазин и его реквизиты SPA кладёт в состояние страницы, а несуществующий
-# адрес отмечает там же кодом ответа. Поэтому обе проверки — один вызов, и
-# разбирать вёрстку не нужно. Реквизиты дублируются во всплывающей подсказке
-# у названия магазина, но она появляется только при наведении мыши.
+# Магазин и его реквизиты SPA кладёт в bootstrap-состояние страницы, а
+# несуществующий адрес отмечает там же кодом ответа. После гидрации сайт
+# удаляет window.__APP__, но исходный inline-скрипт остаётся в документе.
+# Поэтому сначала читаем живой объект, а затем — тот же объект из скрипта.
 SELLER_STATE_SCRIPT = r"""
 (() => {
-    const state = (window.__APP__ || {}).hydratorState || {};
+    const readBootstrapApp = () => {
+        const prefix = 'window.__APP__=';
+        const script = Array.from(document.scripts).find((item) =>
+            (item.textContent || '').trimStart().startsWith(prefix)
+        );
+        if (!script) {
+            return null;
+        }
+
+        let source = (script.textContent || '').trimStart().slice(prefix.length);
+        source = source.replace(/;\s*$/, '');
+        try {
+            return Function('"use strict"; return (' + source + ')')();
+        } catch (_error) {
+            return null;
+        }
+    };
+
+    const app = window.__APP__ || readBootstrapApp();
+    const state = (app || {}).hydratorState || {};
     const error = (state.ApplicationStore || {}).serverError;
     const info = (state.MerchantStore || {}).merchantLegalInfo;
     const legal = (info && info.legalInfo) || {};
+    const notFound = document.querySelector('.not-found');
     return {
-        ready: Boolean(window.__APP__),
-        statusCode: error && error.statusCode ? error.statusCode : 0,
+        ready: Boolean(app || notFound),
+        statusCode: error && error.statusCode
+            ? error.statusCode
+            : (notFound ? 404 : 0),
         merchantId: info ? String(info.id || '') : '',
         name: info ? String(info.name || '') : '',
         slug: info ? String(info.slug || '') : '',

@@ -3,8 +3,14 @@ name = "pythonproject"
 version = "0.1.0"
 requires-python = ">=3.13"
 dependencies = [
+    "alembic>=1.19.1",
+    "asyncpg>=0.31.0",
+    "fastapi>=0.141.1",
     "openpyxl>=3.1.5",
     "parsek-cdp>=0.1.8",
+    "psycopg[binary]>=3.3.5",
     "pydantic-settings>=2.15.0",
+    "python-multipart>=0.0.32",
     "sqlalchemy>=2.0.52",
+    "uvicorn>=0.52.4",
 ]

@@ -9,6 +9,7 @@ from pydantic import (
     model_validator,
 )
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy.engine import URL
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -71,6 +72,37 @@ class ParserSettings(BaseSettings):
         return self
 
 
+class DatabaseSettings(BaseSettings):
+    """Параметры подключения приложения к PostgreSQL."""
+
+    model_config = ENV_CONFIG
+
+    db_host: str
+    db_port: int
+    db_name: str
+    db_user: str
+    db_password: str
+    db_echo: bool
+
+    def _url(self, drivername: str) -> str:
+        return URL.create(
+            drivername=drivername,
+            username=self.db_user,
+            password=self.db_password,
+            host=self.db_host,
+            port=self.db_port,
+            database=self.db_name,
+        ).render_as_string(hide_password=False)
+
+    @property
+    def sync_db_url(self) -> str:
+        return self._url("postgresql+psycopg")
+
+    @property
+    def async_db_url(self) -> str:
+        return self._url("postgresql+asyncpg")
+
+
 class Settings(BaseSettings):
     """Окружение: куда складывать результат, какой сайт, какой браузер."""
 
@@ -87,6 +119,7 @@ class Settings(BaseSettings):
     # Своя модель настроек, а не вложенное поле: имена переменных окружения
     # остаются прежними (PARSER_NUMBER_PAGES, а не PARSER_PARSER__...).
     parser: ParserSettings = Field(default_factory=ParserSettings)
+    db: DatabaseSettings = Field(default_factory=DatabaseSettings)
 
     @field_validator("base_url")
     @classmethod
