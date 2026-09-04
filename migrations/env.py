@@ -3,15 +3,16 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
-from megamarket.config import settings
+from megamarket.config import get_database_settings
 from megamarket.db.base import Base
 from megamarket.db import models  # noqa: F401
 
 
 config = context.config
+db_settings = get_database_settings()
 config.set_main_option(
     "sqlalchemy.url",
-    settings.db.sync_db_url.replace("%", "%%"),
+    db_settings.sync_db_url.replace("%", "%%"),
 )
 
 if config.config_file_name is not None:

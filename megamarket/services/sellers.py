@@ -1,37 +1,24 @@
-from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from uuid import uuid4
 
-from parsek_cdp import Browser, ProtocolError
-from parsek_cdp.core.target import Target
 from sqlalchemy.exc import IntegrityError
-from websockets.exceptions import ConnectionClosed
 
-from megamarket.cdp.parsek_compat import install_parsek_target_race_fix
 from megamarket.config import settings
-from megamarket.db.models import Sellers, SellerStatus
-from megamarket.exceptions import SiteBlocked
-from megamarket.parsers.seller_page import MegamarketSellerPage, SellerPageState
+from megamarket.db.models import SellerJob, Sellers
+from megamarket.domain import SellerObservationState, SellerStatus
 from megamarket.repositories.sellers import SellerRepository
+from megamarket.schemas.seller_jobs import (
+    SellerCandidate,
+    SellerJobFinishResponse,
+    SellerJobStartResponse,
+    SellerObservation,
+    SellerObservationResponse,
+)
 from megamarket.schemas.sellers import SellerUpdate
 from megamarket.slug import SlugifyCard
 from megamarket.storage.report import ExcelCardsReport
 from megamarket.utils import normalize_link, normalize_text
-
-
-@dataclass(frozen=True, slots=True)
-class DefineSellersResult:
-    added: int = 0
-    selected: int = 0
-    processed: int = 0
-    confirmed: int = 0
-    incorrect: int = 0
-    unknown: int = 0
-    stopped_reason: str = ""
-    output_path: Path | None = None
-
-
-class SellerBrowserUnavailable(RuntimeError):
-    pass
 
 
 class SellerNotFoundError(LookupError):
@@ -42,14 +29,15 @@ class SellerConflictError(RuntimeError):
     pass
 
 
+class SellerJobStateError(RuntimeError):
+    pass
+
+
 class SellerService:
-    def __init__(
-            self,
-            repository: SellerRepository,
-            seller_page: MegamarketSellerPage | None = None,
-    ) -> None:
+    """Серверная бизнес-логика списка продавцов."""
+
+    def __init__(self, repository: SellerRepository) -> None:
         self.repository = repository
-        self.seller_page = seller_page
 
     async def get_sellers(
             self,
@@ -88,120 +76,213 @@ class SellerService:
             await self.repository.rollback()
             raise
 
-    async def define_sellers(
+
+class SellerJobService:
+    """Серверная часть распределённой проверки продавцов."""
+
+    JOB_TTL = timedelta(minutes=30)
+
+    def __init__(self, repository: SellerRepository) -> None:
+        self.repository = repository
+
+    async def start(
             self,
             *,
             limit: int,
             input_path: Path | None = None,
             output_path: Path | None = None,
-    ) -> DefineSellersResult:
+            filename: str | None = None,
+    ) -> SellerJobStartResponse:
         report: ExcelCardsReport | None = None
-        added = 0
-        browser: Browser | None = None
-
         try:
+            added = 0
             if input_path is not None:
-                if output_path is None:
-                    raise ValueError("Не указан путь для выходного Excel-файла")
+                if output_path is None or filename is None:
+                    raise ValueError("Не указаны параметры выходного Excel-файла")
                 report = ExcelCardsReport(input_path)
                 added = await self.repository.add_new(
                     self._sellers_from_report(report)
                 )
-                await self.repository.commit()
 
-            pending = await self.repository.get_unconfirmed(limit)
-            processed = confirmed = incorrect = unknown = 0
-            stopped_reason = ""
-
-            if pending:
-                parser, browser = await self._get_seller_page()
-                for seller in pending:
-                    try:
-                        parsed = await parser.parse(seller.link_to_seller)
-                    except SiteBlocked:
-                        stopped_reason = "site_blocked"
-                        break
-                    except (ConnectionError, ConnectionClosed, ProtocolError):
-                        stopped_reason = "browser_connection_lost"
-                        break
-
-                    processed += 1
-                    if parsed.state is SellerPageState.NOT_FOUND:
-                        await self.repository.mark_incorrect(seller.seller_id)
-                        await self.repository.commit()
-                        incorrect += 1
-                    elif parsed.state is SellerPageState.FOUND and parsed.info is not None:
-                        if parsed.info.seller_id != seller.seller_id:
-                            await self.repository.mark_incorrect(seller.seller_id)
-                            await self.repository.commit()
-                            incorrect += 1
-                            continue
-
-                        canonical_link = (
-                            f"{settings.base_url}/shop/{parsed.info.slug}/"
-                            if parsed.info.slug
-                            else seller.link_to_seller
-                        )
-                        await self.repository.confirm(
-                            seller.seller_id,
-                            parsed.info,
-                            canonical_link,
-                        )
-                        await self.repository.commit()
-                        confirmed += 1
-                    else:
-                        unknown += 1
-
-            saved_path = None
-            if report is not None and output_path is not None:
-                await self._set_report_links(report)
-                saved_path = report.save(
-                    output_path,
-                    replace_seller_links=True,
-                )
-
-            return DefineSellersResult(
+            now = datetime.now(UTC)
+            job = SellerJob(
+                job_id=str(uuid4()),
+                filename=filename,
+                input_path=str(input_path) if input_path is not None else None,
+                output_path=str(output_path) if output_path is not None else None,
                 added=added,
-                selected=len(pending),
-                processed=processed,
-                confirmed=confirmed,
-                incorrect=incorrect,
-                unknown=unknown,
-                stopped_reason=stopped_reason,
-                output_path=saved_path,
+                expires_at=now + self.JOB_TTL,
             )
+            sellers = await self.repository.create_job(job, limit)
+            await self.repository.commit()
+            return SellerJobStartResponse(
+                job_id=job.job_id,
+                added=added,
+                filename=filename,
+                sellers=[
+                    SellerCandidate.model_validate(seller, from_attributes=True)
+                    for seller in sellers
+                ],
+            )
+        except Exception:
+            await self.repository.rollback()
+            raise
         finally:
             if report is not None:
                 report.close()
-            if browser is not None:
+
+    async def observe(
+            self,
+            job_id: str,
+            observation: SellerObservation,
+    ) -> SellerObservationResponse:
+        job = await self._active_job(job_id)
+        item = await self.repository.get_job_item(job.job_id, observation.seller_id)
+        if item is None:
+            raise SellerNotFoundError(
+                f"Продавец {observation.seller_id} не входит в задание"
+            )
+        seller = await self.repository.get_by_identity(
+            seller_id=observation.seller_id
+        )
+        if seller is None:
+            raise SellerNotFoundError(
+                f"Продавец {observation.seller_id} не найден"
+            )
+        if item.processed:
+            return SellerObservationResponse(
+                seller_id=seller.seller_id,
+                status=seller.status.value,
+                outcome=item.outcome or "unknown",
+            )
+
+        try:
+            outcome = "unknown"
+            if observation.state is SellerObservationState.NOT_FOUND:
+                await self.repository.mark_incorrect(seller.seller_id)
+                outcome = "incorrect"
+            elif observation.state is SellerObservationState.FOUND:
+                info = observation.info
+                if info is None:
+                    raise ValueError("Нет данных найденного продавца")
+                if info.seller_id != seller.seller_id:
+                    await self.repository.mark_incorrect(seller.seller_id)
+                    outcome = "incorrect"
+                else:
+                    canonical_link = (
+                        f"{settings.base_url}/shop/{info.slug}/"
+                        if info.slug
+                        else seller.link_to_seller
+                    )
+                    await self.repository.confirm(
+                        seller.seller_id,
+                        info,
+                        canonical_link,
+                    )
+                    outcome = "correct"
+
+            await self.repository.mark_job_item(
+                job.job_id,
+                seller.seller_id,
+                outcome,
+            )
+            await self.repository.commit()
+            return SellerObservationResponse(
+                seller_id=seller.seller_id,
+                status=seller.status.value,
+                outcome=outcome,
+            )
+        except IntegrityError as error:
+            await self.repository.rollback()
+            raise SellerConflictError(
+                "Полученные данные конфликтуют с другим продавцом"
+            ) from error
+        except Exception:
+            await self.repository.rollback()
+            raise
+
+    async def finish(
+            self,
+            job_id: str,
+            *,
+            stopped_reason: str = "",
+    ) -> SellerJobFinishResponse:
+        job = await self.repository.get_job(job_id)
+        if job is None:
+            raise SellerNotFoundError(f"Задание {job_id} не найдено")
+
+        if job.status == "active":
+            if job.input_path and job.output_path:
+                report = ExcelCardsReport(Path(job.input_path))
                 try:
-                    # Browser.close() завершает сам Chrome. Нам нужно закрыть
-                    # только CDP-соединения API-процесса.
-                    await Target.close(browser)
-                except (ConnectionError, ConnectionClosed, ProtocolError):
-                    pass
+                    await self._set_report_links(report)
+                    report.save(
+                        Path(job.output_path),
+                        replace_seller_links=True,
+                    )
+                finally:
+                    report.close()
+            await self.repository.finish_job(
+                job,
+                stopped_reason=stopped_reason,
+                finished_at=datetime.now(UTC),
+            )
+            await self.repository.commit()
+
+        outcomes = await self.repository.get_job_outcomes(job.job_id)
+        return SellerJobFinishResponse(
+            job_id=job.job_id,
+            added=job.added,
+            selected=len(outcomes),
+            processed=sum(outcome is not None for outcome in outcomes),
+            confirmed=outcomes.count("correct"),
+            incorrect=outcomes.count("incorrect"),
+            unknown=outcomes.count("unknown"),
+            stopped_reason=job.stopped_reason,
+            filename=job.filename,
+            has_file=bool(job.output_path and Path(job.output_path).is_file()),
+        )
+
+    async def get_file(self, job_id: str) -> tuple[Path, str]:
+        job = await self.repository.get_job(job_id)
+        if job is None:
+            raise SellerNotFoundError(f"Задание {job_id} не найдено")
+        if job.status != "finished":
+            raise SellerJobStateError("Задание ещё не завершено")
+        if not job.output_path or not job.filename:
+            raise SellerNotFoundError("У задания нет Excel-файла")
+        path = Path(job.output_path)
+        if not path.is_file():
+            raise SellerNotFoundError("Excel-файл задания не найден")
+        return path, job.filename
+
+    async def _active_job(self, job_id: str) -> SellerJob:
+        job = await self.repository.get_job(job_id)
+        if job is None:
+            raise SellerNotFoundError(f"Задание {job_id} не найдено")
+        if job.status != "active":
+            raise SellerJobStateError("Задание уже завершено")
+        if job.expires_at <= datetime.now(UTC):
+            raise SellerJobStateError("Время выполнения задания истекло")
+        return job
 
     @staticmethod
     def _sellers_from_report(report: ExcelCardsReport) -> list[Sellers]:
-        sellers: list[Sellers] = []
-        for card in report.cards:
-            name = normalize_text(card.seller)
-            sellers.append(
-                Sellers(
-                    seller_id=normalize_link(card.card_link),
-                    name=name,
-                    link_to_seller=SlugifyCard.link_for_seller(name),
-                    link_to_card=card.card_link,
-                    status=SellerStatus.UNCONFIRMED,
-                )
+        return [
+            Sellers(
+                seller_id=normalize_link(card.card_link),
+                name=normalize_text(card.seller),
+                link_to_seller=SlugifyCard.link_for_seller(
+                    normalize_text(card.seller)
+                ),
+                link_to_card=card.card_link,
+                status=SellerStatus.UNCONFIRMED,
             )
-        return sellers
+            for card in report.cards
+        ]
 
     async def _set_report_links(self, report: ExcelCardsReport) -> None:
-        seller_ids = {
-            normalize_link(card.card_link)
-            for card in report.cards
-        }
+        seller_ids = {normalize_link(card.card_link) for card in report.cards}
         sellers = await self.repository.get_by_ids(seller_ids)
         for card in report.cards:
             seller = sellers.get(normalize_link(card.card_link))
@@ -210,16 +291,3 @@ class SellerService:
                 if seller is not None and seller.status is SellerStatus.CORRECT
                 else ""
             )
-
-    async def _get_seller_page(self) -> tuple[MegamarketSellerPage, Browser | None]:
-        if self.seller_page is not None:
-            return self.seller_page, None
-
-        install_parsek_target_race_fix()
-        try:
-            browser = await Browser.connect_http(settings.browser_endpoint)
-        except Exception as error:
-            raise SellerBrowserUnavailable(
-                f"Не удалось подключиться к браузеру: {settings.browser_endpoint}"
-            ) from error
-        return MegamarketSellerPage(browser), browser

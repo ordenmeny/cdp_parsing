@@ -65,16 +65,11 @@ export function OperationsView({ notify }: { notify: Notify }) {
           <div className="operation-card__icon"><PlayIcon /></div>
           <span className="eyebrow">Scrolling parser</span>
           <h2>Собрать товары</h2>
-          <p>
-            Страница поиска откроется один раз, после чего парсер будет
-            догружать карточки кнопкой «Показать ещё».
-          </p>
 
           <form onSubmit={parse} className="operation-form">
             <label className="field field--on-dark">
               <span>Поисковый запрос</span>
               <div className="command-input">
-                <span>scrolling||</span>
                 <input
                   required
                   value={query}

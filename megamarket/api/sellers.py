@@ -1,119 +1,90 @@
-from dataclasses import asdict
 from typing import Annotated
+from urllib.parse import quote
 
-from fastapi import APIRouter, File, HTTPException, Query, UploadFile
-from fastapi.responses import FileResponse
-from starlette.background import BackgroundTask
+from fastapi import APIRouter, File, HTTPException, Query, Response, UploadFile
 
-from megamarket.api.deps import SellerServiceDep
-from megamarket.api.workbooks import UploadedWorkbook
-from megamarket.db.models import SellerStatus
+from megamarket.api.deps import LocalSellerServiceDep
+from megamarket.clients.remote_api import RemoteApiError, RemoteApiUnavailable
+from megamarket.domain import SellerStatus
 from megamarket.schemas.sellers import (
     DefineSellersResponse,
     SellerResponse,
     SellerUpdate,
 )
-from megamarket.services.sellers import (
-    SellerBrowserUnavailable,
-    SellerConflictError,
-    SellerNotFoundError,
-)
+
 
 router = APIRouter(tags=["sellers"])
 
 
 @router.get("/get_sellers", response_model=list[SellerResponse])
 async def get_sellers(
-        service: SellerServiceDep,
+        service: LocalSellerServiceDep,
         status: Annotated[SellerStatus | None, Query()] = None,
 ) -> list[SellerResponse]:
-    """
-    Ендпоинт для получения селлеров по их статусу.
-    correct - ссылка на продавца верная.
-    incorrect - ссылка неверная
-    unconfirmed - ссылка на продавца еще не проверена, для проверки есть ендпоинт define_sellers
-    """
-    sellers = await service.get_sellers(status)
-    return [SellerResponse.model_validate(seller) for seller in sellers]
+    try:
+        return await service.get_sellers(status)
+    except (RemoteApiError, RemoteApiUnavailable) as error:
+        raise _http_error(error) from error
 
 
 @router.patch("/set_sellers", response_model=list[SellerResponse])
 async def set_sellers(
         updates: SellerUpdate | list[SellerUpdate],
-        service: SellerServiceDep,
+        service: LocalSellerServiceDep,
 ) -> list[SellerResponse]:
-    """
-    Ендпоинт для изменения данных о конкретном продавце.
-    Передайте либо name, либо seller_id и поля для изменения.
-    """
     items = updates if isinstance(updates, list) else [updates]
     if not items:
         raise HTTPException(status_code=422, detail="Список изменений пуст")
-
     try:
-        sellers = await service.set_sellers(items)
-    except SellerNotFoundError as error:
-        raise HTTPException(status_code=404, detail=str(error)) from error
-    except SellerConflictError as error:
-        raise HTTPException(status_code=409, detail=str(error)) from error
-    return [SellerResponse.model_validate(seller) for seller in sellers]
+        return await service.set_sellers(items)
+    except (RemoteApiError, RemoteApiUnavailable) as error:
+        raise _http_error(error) from error
 
 
 @router.post("/define_sellers", response_model=None)
 async def define_sellers(
-        service: SellerServiceDep,
+        service: LocalSellerServiceDep,
         limit: Annotated[int, Query(ge=1)] = 4,
         file: Annotated[UploadFile | None, File()] = None,
-) -> DefineSellersResponse | FileResponse:
-    """
-    Функция для автоматического подтверждения продавцов (а точнее их ссылок и данных).
-    Можно вставить файл и в базу данных будут загружены новые продавцы со статусом unconfirmed.
-    limit - параметр, отвечающий за то, сколько будет подтверждено продавцов за одно исполнение функции.
-    Результатом исполнения функции будет изменение статусов продавцов на incorrect или correct.
-    В случае верной ссылки будет установлен статус correct и будут собраны данные о продавце.
-    Статус incorrect означает, что текущая ссылка на продавца некорректна.
-    """
-    workbook: UploadedWorkbook | None = None
+) -> DefineSellersResponse | Response:
     try:
-        if file is not None:
-            workbook = await UploadedWorkbook.create(file)
-        result = await service.define_sellers(
-            limit=limit,
-            input_path=workbook.input_path if workbook else None,
-            output_path=workbook.output_path if workbook else None,
-        )
-    except ValueError as error:
-        if workbook is not None:
-            workbook.cleanup()
-        raise HTTPException(status_code=422, detail=str(error)) from error
-    except SellerBrowserUnavailable as error:
-        if workbook is not None:
-            workbook.cleanup()
+        result = await service.define_sellers(limit=limit, file=file)
+    except (RemoteApiError, RemoteApiUnavailable) as error:
+        raise _http_error(error) from error
+    except RuntimeError as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
-    except Exception:
-        if workbook is not None:
-            workbook.cleanup()
-        raise
 
-    payload = asdict(result)
-    payload.pop("output_path")
-    if workbook is None:
-        return DefineSellersResponse.model_validate(payload)
-
-    if result.output_path is None:
-        workbook.cleanup()
-        raise HTTPException(status_code=500, detail="Выходной файл не был создан")
+    summary = result.summary
+    if result.file is None:
+        return DefineSellersResponse(
+            added=summary.added,
+            selected=summary.selected,
+            processed=summary.processed,
+            confirmed=summary.confirmed,
+            incorrect=summary.incorrect,
+            unknown=summary.unknown,
+            stopped_reason=summary.stopped_reason,
+        )
 
     headers = {
-        f"X-Sellers-{name.replace('_', '-').title()}": str(value)
-        for name, value in payload.items()
-    }
-    return FileResponse(
-        result.output_path,
-        filename=workbook.filename,
-        media_type=(
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        "Content-Disposition": (
+            "attachment; filename*=UTF-8''" + quote(result.file.filename)
         ),
+        "X-Sellers-Added": str(summary.added),
+        "X-Sellers-Selected": str(summary.selected),
+        "X-Sellers-Processed": str(summary.processed),
+        "X-Sellers-Confirmed": str(summary.confirmed),
+        "X-Sellers-Incorrect": str(summary.incorrect),
+        "X-Sellers-Unknown": str(summary.unknown),
+    }
+    return Response(
+        content=result.file.content,
+        media_type=result.file.media_type,
         headers=headers,
-        background=BackgroundTask(workbook.cleanup),
     )
+
+
+def _http_error(error: RemoteApiError | RemoteApiUnavailable) -> HTTPException:
+    if isinstance(error, RemoteApiError):
+        return HTTPException(status_code=error.status_code, detail=str(error))
+    return HTTPException(status_code=503, detail=str(error))

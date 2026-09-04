@@ -1,0 +1,22 @@
+services:
+  local-api:
+    build:
+      context: .
+    image: megamarket-api:latest
+    environment:
+      PARSER_REMOTE_API_URL: ${PARSER_REMOTE_API_URL:?PARSER_REMOTE_API_URL is required}
+      PARSER_REMOTE_API_TOKEN: ${PARSER_REMOTE_API_TOKEN:?PARSER_REMOTE_API_TOKEN is required}
+      PARSER_REMOTE_API_TIMEOUT: ${PARSER_REMOTE_API_TIMEOUT:?PARSER_REMOTE_API_TIMEOUT is required}
+      PARSER_BROWSER_HOST: host.docker.internal
+      PARSER_BROWSER_PORT: ${PARSER_BROWSER_PORT:?PARSER_BROWSER_PORT is required}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - parser_output:/app/output
+    init: true
+    restart: unless-stopped
+
+volumes:
+  parser_output:

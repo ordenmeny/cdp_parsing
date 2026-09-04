@@ -8,6 +8,18 @@ class Stock(StrEnum):
     OUT_OF_STOCK = "OutOfStock"
 
 
+class SellerStatus(StrEnum):
+    CORRECT = "correct"
+    UNCONFIRMED = "unconfirmed"
+    INCORRECT = "incorrect"
+
+
+class SellerObservationState(StrEnum):
+    FOUND = "found"
+    NOT_FOUND = "not_found"
+    UNKNOWN = "unknown"
+
+
 class CardToPars(BaseModel):
     title: str = Field(title="Название")
     price: str = Field(title="Цена")

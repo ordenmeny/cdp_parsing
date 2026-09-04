@@ -8,6 +8,8 @@ from fastapi import UploadFile
 
 @dataclass(frozen=True, slots=True)
 class UploadedWorkbook:
+    MAX_SIZE = 50 * 1024 * 1024
+
     directory: Path
     input_path: Path
     output_path: Path
@@ -27,8 +29,12 @@ class UploadedWorkbook:
         output_path.parent.mkdir()
 
         try:
+            size = 0
             with input_path.open("wb") as target:
                 while chunk := await upload.read(1024 * 1024):
+                    size += len(chunk)
+                    if size > cls.MAX_SIZE:
+                        raise ValueError("Размер Excel-файла превышает 50 МБ")
                     target.write(chunk)
         except Exception:
             shutil.rmtree(directory, ignore_errors=True)

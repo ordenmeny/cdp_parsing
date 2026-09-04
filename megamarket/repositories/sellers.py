@@ -1,10 +1,11 @@
 from collections.abc import Sequence
+from datetime import datetime
 
-from sqlalchemy import or_, select
+from sqlalchemy import exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from megamarket.db.models import Sellers, SellerStatus
-from megamarket.domain import SellerInfo
+from megamarket.db.models import SellerJob, SellerJobItem, Sellers
+from megamarket.domain import SellerInfo, SellerStatus
 
 
 class SellerRepository:
@@ -65,6 +66,45 @@ class SellerRepository:
         )
         return list((await self.session.scalars(statement)).all())
 
+    async def create_job(
+            self,
+            job: SellerJob,
+            limit: int,
+    ) -> list[Sellers]:
+        """Создать задание и зарезервировать ещё не занятых продавцов."""
+        active_reservation = exists(
+            select(SellerJobItem.job_id)
+            .join(SellerJob, SellerJob.job_id == SellerJobItem.job_id)
+            .where(
+                SellerJobItem.seller_id == Sellers.seller_id,
+                SellerJob.status == "active",
+                SellerJob.expires_at > func.now(),
+            )
+        )
+        statement = (
+            select(Sellers)
+            .where(
+                Sellers.status == SellerStatus.UNCONFIRMED,
+                ~active_reservation,
+            )
+            .order_by(Sellers.seller_id)
+            .limit(limit)
+            .with_for_update(skip_locked=True)
+        )
+        sellers = list((await self.session.scalars(statement)).all())
+        self.session.add(job)
+        await self.session.flush()
+        self.session.add_all([
+            SellerJobItem(
+                job_id=job.job_id,
+                seller_id=seller.seller_id,
+                position=position,
+            )
+            for position, seller in enumerate(sellers)
+        ])
+        await self.session.flush()
+        return sellers
+
     async def get_all(
             self,
             status: SellerStatus | None = None,
@@ -93,6 +133,51 @@ class SellerRepository:
         statement = select(Sellers).where(Sellers.seller_id.in_(seller_ids))
         sellers = (await self.session.scalars(statement)).all()
         return {seller.seller_id: seller for seller in sellers}
+
+    async def get_job(self, job_id: str) -> SellerJob | None:
+        return await self.session.get(SellerJob, job_id)
+
+    async def get_job_item(
+            self,
+            job_id: str,
+            seller_id: str,
+    ) -> SellerJobItem | None:
+        return await self.session.get(SellerJobItem, (job_id, seller_id))
+
+    async def mark_job_item(
+            self,
+            job_id: str,
+            seller_id: str,
+            outcome: str,
+    ) -> None:
+        item = await self.get_job_item(job_id, seller_id)
+        if item is None:
+            raise LookupError(
+                f"Продавец {seller_id} не входит в задание {job_id}"
+            )
+        item.processed = True
+        item.outcome = outcome
+        await self.session.flush()
+
+    async def get_job_outcomes(self, job_id: str) -> list[str | None]:
+        statement = (
+            select(SellerJobItem.outcome)
+            .where(SellerJobItem.job_id == job_id)
+            .order_by(SellerJobItem.position)
+        )
+        return list((await self.session.scalars(statement)).all())
+
+    async def finish_job(
+            self,
+            job: SellerJob,
+            *,
+            stopped_reason: str,
+            finished_at: datetime,
+    ) -> None:
+        job.status = "finished"
+        job.stopped_reason = stopped_reason
+        job.finished_at = finished_at
+        await self.session.flush()
 
     async def mark_incorrect(self, seller_id: str) -> None:
         seller = await self._get_required(seller_id)

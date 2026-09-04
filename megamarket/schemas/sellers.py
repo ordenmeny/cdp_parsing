@@ -1,6 +1,6 @@
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
-from megamarket.db.models import SellerStatus
+from megamarket.domain import SellerStatus
 
 
 class SellerResponse(BaseModel):

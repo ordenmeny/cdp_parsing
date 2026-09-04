@@ -201,7 +201,6 @@ input[type="checkbox"] { width: 15px; height: 15px; accent-color: #252c28; }
 .operation-form { display: grid; gap: 16px; }
 .field--on-dark > span { color: #b7bfba; }
 .command-input { display: flex; height: 49px; align-items: center; overflow: hidden; background: #242a27; border: 1px solid #343c38; border-radius: 10px; }
-.command-input > span { padding: 0 0 0 14px; color: var(--lime); font-family: "SFMono-Regular", Consolas, monospace; font-size: 11px; }
 .command-input input { height: 100%; color: #fff; background: transparent; border: 0; box-shadow: none; }
 .command-input input:focus { border: 0; box-shadow: none; }
 .command-input input::placeholder { color: #626b66; }

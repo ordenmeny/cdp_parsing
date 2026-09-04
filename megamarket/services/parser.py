@@ -7,6 +7,7 @@ from parsek_cdp.core.target import Target
 from websockets.exceptions import ConnectionClosed
 
 from megamarket.cdp.cdp_metrics import collect_cdp_metrics
+from megamarket.cdp.browser_endpoint import connect_browser
 from megamarket.cdp.parsek_compat import install_parsek_target_race_fix
 from megamarket.config import settings
 from megamarket.domain import CardToPars
@@ -85,7 +86,7 @@ class ParserService:
         install_parsek_target_race_fix()
         try:
             return await asyncio.wait_for(
-                Browser.connect_http(settings.browser_endpoint),
+                connect_browser(settings.browser_endpoint),
                 timeout=30,
             )
         except Exception as error:

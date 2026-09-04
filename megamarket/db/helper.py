@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.orm import Session, sessionmaker
 
-from megamarket.config import settings
+from megamarket.config import get_database_settings
 
 
 class AsyncSessionManager:
@@ -55,13 +55,16 @@ class SyncSessionManager:
         self.engine.dispose()
 
 
+db_settings = get_database_settings()
+
+
 sync_session_manager = SyncSessionManager(
-    db_url=settings.db.sync_db_url,
-    echo=settings.db.db_echo,
+    db_url=db_settings.sync_db_url,
+    echo=db_settings.db_echo,
 )
 
 
 async_session_manager = AsyncSessionManager(
-    db_url=settings.db.async_db_url,
-    echo=settings.db.db_echo,
+    db_url=db_settings.async_db_url,
+    echo=db_settings.db_echo,
 )

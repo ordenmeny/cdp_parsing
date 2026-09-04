@@ -8,20 +8,20 @@ const apiPaths = [
   "/parse",
 ];
 
-export default defineConfig(({ mode }) => {
+export default defineConfig(({ command, mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
   const apiTarget = env.VITE_API_PROXY_TARGET;
-  if (!apiTarget) {
+  if (command === "serve" && !apiTarget) {
     throw new Error("VITE_API_PROXY_TARGET is required");
   }
 
   return {
     plugins: [react()],
-    server: {
+    server: command === "serve" ? {
       port: 5173,
       proxy: Object.fromEntries(
-        apiPaths.map((path) => [path, { target: apiTarget, changeOrigin: true }]),
+        apiPaths.map((path) => [path, { target: apiTarget!, changeOrigin: true }]),
       ),
-    },
+    } : undefined,
   };
 });

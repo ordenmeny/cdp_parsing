@@ -5,6 +5,7 @@ from websockets.exceptions import ConnectionClosed
 
 from megamarket import utils
 from megamarket.cdp.cdp_metrics import collect_cdp_metrics
+from megamarket.cdp.browser_endpoint import connect_browser as connect_cdp_browser
 from megamarket.config import settings
 from megamarket.domain import CardToPars, Stock
 from megamarket.cdp.parsek_compat import install_parsek_target_race_fix
@@ -22,7 +23,7 @@ async def connect_browser(endpoint: str) -> Browser:
     print(f"Подключаемся к браузеру: {endpoint}...")
     try:
         browser = await asyncio.wait_for(
-            Browser.connect_http(endpoint),
+            connect_cdp_browser(endpoint),
             timeout=30,
         )
     except TimeoutError as error:

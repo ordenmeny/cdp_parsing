@@ -5,6 +5,7 @@ from pathlib import Path
 from parsek_cdp import Browser
 
 from megamarket.config import settings
+from megamarket.cdp.browser_endpoint import connect_browser as connect_cdp_browser
 from megamarket.cdp.parsek_compat import install_parsek_target_race_fix
 from megamarket.parsers.parsing import MegamarketParseCard
 from megamarket.storage.report import ExcelCardsReport
@@ -12,7 +13,7 @@ from megamarket.storage.report import ExcelCardsReport
 
 async def connect_browser(endpoint: str) -> Browser:
     install_parsek_target_race_fix()
-    return await Browser.connect_http(endpoint)
+    return await connect_cdp_browser(endpoint)
 
 
 async def set_seller_links(path: str | Path) -> Path:

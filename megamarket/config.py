@@ -1,15 +1,17 @@
+from functools import lru_cache
 from pathlib import Path
 
 from pydantic import (
+    AnyHttpUrl,
     Field,
     NonNegativeFloat,
     NonNegativeInt,
     PositiveInt,
+    SecretStr,
     field_validator,
     model_validator,
 )
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from sqlalchemy.engine import URL
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -85,6 +87,8 @@ class DatabaseSettings(BaseSettings):
     db_echo: bool
 
     def _url(self, drivername: str) -> str:
+        from sqlalchemy.engine import URL
+
         return URL.create(
             drivername=drivername,
             username=self.db_user,
@@ -103,6 +107,24 @@ class DatabaseSettings(BaseSettings):
         return self._url("postgresql+asyncpg")
 
 
+class RemoteApiSettings(BaseSettings):
+    """Настройки локального шлюза и авторизации удалённого API."""
+
+    model_config = ENV_CONFIG
+
+    remote_api_url: AnyHttpUrl
+    remote_api_token: SecretStr = Field(min_length=32)
+    remote_api_timeout: PositiveInt = 600
+
+
+class RemoteApiAuthSettings(BaseSettings):
+    """Секрет, который проверяет только удалённое API."""
+
+    model_config = ENV_CONFIG
+
+    remote_api_token: SecretStr = Field(min_length=32)
+
+
 class Settings(BaseSettings):
     """Окружение: куда складывать результат, какой сайт, какой браузер."""
 
@@ -119,7 +141,6 @@ class Settings(BaseSettings):
     # Своя модель настроек, а не вложенное поле: имена переменных окружения
     # остаются прежними (PARSER_NUMBER_PAGES, а не PARSER_PARSER__...).
     parser: ParserSettings = Field(default_factory=ParserSettings)
-    db: DatabaseSettings = Field(default_factory=DatabaseSettings)
 
     @field_validator("base_url")
     @classmethod
@@ -135,3 +156,18 @@ class Settings(BaseSettings):
 
 settings = Settings()
 parser_settings = settings.parser
+
+
+@lru_cache
+def get_database_settings() -> DatabaseSettings:
+    return DatabaseSettings()
+
+
+@lru_cache
+def get_remote_api_settings() -> RemoteApiSettings:
+    return RemoteApiSettings()
+
+
+@lru_cache
+def get_remote_api_auth_settings() -> RemoteApiAuthSettings:
+    return RemoteApiAuthSettings()
