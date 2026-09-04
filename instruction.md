@@ -8,7 +8,7 @@
 2. После запуска сервера проверить, что открывается:
 
    ```text
-   http://10.0.0.198:8001/docs
+   http://10.0.4.69:8001/docs
    ```
 
 3. Передать каждому пользователю готовый файл `.env`.
@@ -97,7 +97,7 @@ npm --prefix frontend run build
 Проверить сервер:
 
 ```powershell
-Invoke-WebRequest http://10.0.0.198:8001/docs -UseBasicParsing
+Invoke-WebRequest http://10.0.4.69:8001/docs -UseBasicParsing
 ```
 
 Должен появиться статус `200`.

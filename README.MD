@@ -29,7 +29,7 @@ cd MegamarketControl
 Проверьте доступность сервера:
 
 ```powershell
-Invoke-WebRequest http://10.0.0.198:8001/docs -UseBasicParsing
+Invoke-WebRequest http://10.0.4.69:8001/docs -UseBasicParsing
 ```
 
 В результате должен появиться статус `200`.
@@ -135,7 +135,7 @@ uv sync --locked
 Проверьте сервер:
 
 ```powershell
-Invoke-WebRequest http://10.0.0.198:8001/docs -UseBasicParsing
+Invoke-WebRequest http://10.0.4.69:8001/docs -UseBasicParsing
 ```
 
 Проверьте Chrome:

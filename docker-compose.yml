@@ -1,4 +1,26 @@
 services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${PARSER_DB_NAME:?PARSER_DB_NAME is required}
+      POSTGRES_USER: ${PARSER_DB_USER:?PARSER_DB_USER is required}
+      POSTGRES_PASSWORD: ${PARSER_DB_PASSWORD:?PARSER_DB_PASSWORD is required}
+    # Порт наружу не публикуется: до базы дотягиваются только сервисы этого
+    # Compose, пользовательским компьютерам она недоступна.
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # Значения подставляет Compose при чтении файла — те же, что и выше.
+      # Внутрь контейнера переменные не передаются, поэтому и escaping не нужен.
+      test:
+        - CMD-SHELL
+        - pg_isready -U ${PARSER_DB_USER} -d ${PARSER_DB_NAME}
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    init: true
+    restart: unless-stopped
+
   remote-api:
     build:
       context: .
@@ -7,7 +29,13 @@ services:
       - .env.remote
     environment:
       TMPDIR: /var/lib/megamarket/jobs
-    network_mode: host
+    # Миграции стартуют сразу, поэтому база должна быть готова принимать
+    # подключения, а не просто существовать как контейнер.
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8001:8001"
     command:
       - sh
       - -c
@@ -22,3 +50,4 @@ services:
 
 volumes:
   seller_jobs:
+  pgdata:
