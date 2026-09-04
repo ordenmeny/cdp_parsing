@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from megamarket.api.remote_frontend import router as frontend_router
 from megamarket.api.remote_sellers import router as sellers_router
 from megamarket.db.helper import async_session_manager, sync_session_manager
 
@@ -15,3 +16,4 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(title="Megamarket Remote API", lifespan=lifespan)
 app.include_router(sellers_router)
+app.include_router(frontend_router)

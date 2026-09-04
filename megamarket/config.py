@@ -1,3 +1,4 @@
+import os
 from functools import lru_cache
 from pathlib import Path
 
@@ -14,6 +15,25 @@ from pydantic import (
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# Собранный интерфейс: на сервере его кладёт стадия frontend-builder из
+# Dockerfile, локально каталог появляется только при ручной сборке фронтенда.
+FRONTEND_DIST_DIR = BASE_DIR / "frontend" / "dist"
+
+
+def default_frontend_cache_dir() -> Path:
+    """Куда локальное приложение складывает скачанный с сервера интерфейс.
+
+    Кэш живёт вне репозитория: пользователь обновляет код через ``git pull``, а
+    интерфейс приходит с сервера, и смешивать их в одном каталоге незачем.
+    """
+    local_app_data = os.environ.get("LOCALAPPDATA")
+    if local_app_data:
+        return Path(local_app_data) / "MegamarketControl" / "frontend"
+    data_home = os.environ.get("XDG_DATA_HOME")
+    root = Path(data_home) if data_home else Path.home() / ".local" / "share"
+    return root / "megamarket-control" / "frontend"
+
 
 ENV_CONFIG = SettingsConfigDict(
     env_prefix="PARSER_",
@@ -137,6 +157,13 @@ class Settings(BaseSettings):
     browser_host: str = "127.0.0.1"
     browser_port: int = 51112
     cdp_metrics: bool = False
+
+    frontend_cache_dir: Path = Field(
+        default_factory=default_frontend_cache_dir,
+    )
+    # Проверка версии интерфейса не должна задерживать запуск приложения:
+    # сервер либо отвечает сразу, либо работаем на ранее скачанной копии.
+    frontend_sync_timeout: PositiveInt = 15
 
     # Своя модель настроек, а не вложенное поле: имена переменных окружения
     # остаются прежними (PARSER_NUMBER_PAGES, а не PARSER_PARSER__...).

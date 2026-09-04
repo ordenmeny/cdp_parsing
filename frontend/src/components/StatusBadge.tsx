@@ -2,7 +2,7 @@ import type { SellerStatus } from "../types";
 
 const labels: Record<SellerStatus, string> = {
   correct: "Корректный",
-  unconfirmed: "На проверке",
+  unconfirmed: "Ещё не проверен",
   incorrect: "Некорректный",
 };
 

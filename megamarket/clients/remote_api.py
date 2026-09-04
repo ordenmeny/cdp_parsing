@@ -7,6 +7,7 @@ from fastapi import UploadFile
 
 from megamarket.config import RemoteApiSettings
 from megamarket.domain import SellerStatus
+from megamarket.schemas.frontend import FrontendBundleInfo
 from megamarket.schemas.seller_jobs import (
     SellerJobFinishResponse,
     SellerJobStartResponse,
@@ -23,6 +24,10 @@ class RemoteApiError(RuntimeError):
 
 
 class RemoteApiUnavailable(RuntimeError):
+    pass
+
+
+class FrontendBundleTooLarge(RuntimeError):
     pass
 
 
@@ -135,6 +140,50 @@ class RemoteApiClient:
             content=response.content,
         )
 
+    async def get_frontend_info(self, *, timeout: float) -> FrontendBundleInfo:
+        response = await self._request(
+            "GET",
+            "/api/v1/frontend",
+            timeout=timeout,
+        )
+        return FrontendBundleInfo.model_validate(response.json())
+
+    async def download_frontend_bundle(
+            self,
+            *,
+            timeout: float,
+            max_size: int,
+    ) -> bytes:
+        """Скачать архив интерфейса, не набирая в память лишнего.
+
+        Размер ограничен: архив попадёт в файловую систему пользователя, и
+        доверять заявленной длине ответа для этого недостаточно.
+        """
+        chunks: list[bytes] = []
+        total = 0
+        try:
+            async with self._client.stream(
+                "GET",
+                "/api/v1/frontend/bundle",
+                timeout=timeout,
+            ) as response:
+                if response.is_error:
+                    await response.aread()
+                    raise _error_from_response(response)
+                async for chunk in response.aiter_bytes():
+                    total += len(chunk)
+                    if total > max_size:
+                        raise FrontendBundleTooLarge(
+                            "Архив интерфейса больше допустимых "
+                            f"{max_size} байт"
+                        )
+                    chunks.append(chunk)
+        except httpx.RequestError as error:
+            raise RemoteApiUnavailable(
+                "Удалённое API недоступно"
+            ) from error
+        return b"".join(chunks)
+
     async def _request(self, method: str, url: str, **kwargs) -> httpx.Response:
         try:
             response = await self._client.request(method, url, **kwargs)
@@ -143,16 +192,20 @@ class RemoteApiClient:
                 "Удалённое API недоступно"
             ) from error
         if response.is_error:
-            detail = f"Ошибка удалённого API ({response.status_code})"
-            try:
-                payload = response.json()
-                if isinstance(payload, dict) and isinstance(payload.get("detail"), str):
-                    detail = payload["detail"]
-            except ValueError:
-                if response.text:
-                    detail = response.text
-            raise RemoteApiError(response.status_code, detail)
+            raise _error_from_response(response)
         return response
+
+
+def _error_from_response(response: httpx.Response) -> RemoteApiError:
+    detail = f"Ошибка удалённого API ({response.status_code})"
+    try:
+        payload = response.json()
+        if isinstance(payload, dict) and isinstance(payload.get("detail"), str):
+            detail = payload["detail"]
+    except ValueError:
+        if response.text:
+            detail = response.text
+    return RemoteApiError(response.status_code, detail)
 
 
 def _response_filename(response: httpx.Response) -> str | None:

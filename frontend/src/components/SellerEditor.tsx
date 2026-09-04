@@ -78,7 +78,7 @@ export function SellerEditor({
               onChange={(event) => update("status", event.target.value)}
             >
               <option value="correct">Корректный</option>
-              <option value="unconfirmed">На проверке</option>
+              <option value="unconfirmed">Ещё не проверен</option>
               <option value="incorrect">Некорректный</option>
             </select>
           </label>

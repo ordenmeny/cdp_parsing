@@ -51,6 +51,7 @@ class ApiBoundaryTests(unittest.TestCase):
             project / "megamarket/api/sellers.py",
             project / "megamarket/clients/remote_api.py",
             project / "megamarket/services/local_sellers.py",
+            project / "megamarket/services/frontend_sync.py",
         ]
         forbidden = ("sqlalchemy", "megamarket.db", "megamarket.repositories")
         for path in local_files:

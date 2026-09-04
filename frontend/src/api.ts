@@ -5,7 +5,10 @@ import type {
   SellerUpdate,
 } from "./types";
 
-const configuredBaseUrl = import.meta.env.VITE_API_BASE_URL.trim();
+// Интерфейс раздаёт то же приложение, что и API, поэтому по умолчанию адрес
+// пустой — запросы уходят на текущий источник. Переменная нужна только для
+// `npm run dev` и в сборке может отсутствовать.
+const configuredBaseUrl = (import.meta.env.VITE_API_BASE_URL ?? "").trim();
 const baseUrl = configuredBaseUrl.replace(/\/$/, "");
 
 export class ApiError extends Error {

@@ -98,7 +98,7 @@ export function OperationsView({ notify }: { notify: Notify }) {
           <h2>Проверить продавцов</h2>
           <p>
             Добавьте новых продавцов из отчёта и проверьте ссылки со статусом
-            «На проверке».
+            «Ещё не проверен».
           </p>
 
           <form onSubmit={define} className="operation-form">

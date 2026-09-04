@@ -19,7 +19,7 @@ const PAGE_SIZE = 10;
 const filters: { value: Filter; label: string }[] = [
   { value: "all", label: "Все" },
   { value: "correct", label: "Корректные" },
-  { value: "unconfirmed", label: "На проверке" },
+  { value: "unconfirmed", label: "Ещё не проверен" },
   { value: "incorrect", label: "Некорректные" },
 ];
 
@@ -175,7 +175,7 @@ export function SellersView({ notify }: { notify: Notify }) {
         </article>
         <article className="stat-card">
           <span className="stat-card__marker stat-card__marker--pending" />
-          <span>На проверке</span>
+          <span>Ещё не проверен</span>
           <strong>{counts.unconfirmed}</strong>
           <small>ожидают обработки</small>
         </article>
@@ -222,7 +222,7 @@ export function SellersView({ notify }: { notify: Notify }) {
             <span>Изменить статус на</span>
             <select value={bulkStatus} onChange={(event) => setBulkStatus(event.target.value as SellerStatus)}>
               <option value="correct">Корректный</option>
-              <option value="unconfirmed">На проверке</option>
+              <option value="unconfirmed">Ещё не проверен</option>
               <option value="incorrect">Некорректный</option>
             </select>
             <button
