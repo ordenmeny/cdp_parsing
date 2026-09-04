@@ -6,8 +6,11 @@
 Откройте PowerShell и выполните:
 ```powershell
 winget install --id Git.Git -e --source winget
+winget install --id GNU.Nano -e --source winget
 powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
+
+`nano` — простой текстовый редактор, им создаётся файл настроек на шаге 3.
 
 Установите Google Chrome, если он ещё не установлен. После установки закройте
 PowerShell и откройте его снова.
@@ -20,11 +23,37 @@ git clone https://github.com/ordenmeny/cdp_parsing.git MegamarketControl
 cd MegamarketControl
 ```
 
-### 3. Добавить настройки
+### 3. Создать файл настроек
 
-Получите у админов готовый файл `.env` и положите его в директорию проекта рядом с README.md.
+Получите у администратора токен доступа. Затем из папки `MegamarketControl`
+откройте новый файл:
 
-Самостоятельно редактировать `.env` не нужно.
+```powershell
+nano .env
+```
+
+Впишите пять строк, подставив полученный токен вместо `<токен>`:
+
+```dotenv
+PARSER_REMOTE_API_URL=http://10.0.4.69:8001
+PARSER_REMOTE_API_TOKEN=<токен>
+PARSER_REMOTE_API_TIMEOUT=600
+PARSER_BROWSER_HOST=127.0.0.1
+PARSER_BROWSER_PORT=51112
+```
+
+Токен длинный, набирать его руками не нужно — скопируйте и вставьте правой
+кнопкой мыши. Угловые скобки не оставляйте.
+
+Сохраните и закройте файл: нажмите `Ctrl+O`, затем `Enter`, затем `Ctrl+X`.
+
+Проверьте, что получилось:
+
+```powershell
+Get-Content .env
+```
+
+Должны появиться те же пять строк, а в строке с токеном — сам токен.
 
 Проверьте доступность сервера:
 
