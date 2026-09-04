@@ -5,8 +5,10 @@ services:
       POSTGRES_DB: ${PARSER_DB_NAME:?PARSER_DB_NAME is required}
       POSTGRES_USER: ${PARSER_DB_USER:?PARSER_DB_USER is required}
       POSTGRES_PASSWORD: ${PARSER_DB_PASSWORD:?PARSER_DB_PASSWORD is required}
-    # Порт наружу не публикуется: до базы дотягиваются только сервисы этого
-    # Compose, пользовательским компьютерам она недоступна.
+    # Только петля сервера: в локальную сеть база не выходит, а администратор
+    # подключается к ней клиентом через SSH-туннель.
+    ports:
+      - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
