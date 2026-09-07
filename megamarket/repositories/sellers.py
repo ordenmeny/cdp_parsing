@@ -212,12 +212,12 @@ class SellerRepository:
         seller = await self._get_required(seller_id)
         seller.name = info.name or seller.name
         seller.link_to_seller = link_to_seller
-        seller.email = info.email
-        seller.ogrn = info.ogrn
-        seller.official_name = info.official_name
-        seller.inn = info.inn
-        seller.phone = info.phone
-        seller.rating = info.rating
+        for field in ("email", "ogrn", "official_name", "inn", "phone"):
+            value = getattr(info, field)
+            if value.strip():
+                setattr(seller, field, value)
+        if info.rating is not None:
+            seller.rating = info.rating
         seller.status = SellerStatus.CORRECT
         await self.session.flush()
 

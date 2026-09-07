@@ -3,7 +3,8 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from megamarket.db.models import Sellers
-from megamarket.domain import CardToPars, SellerStatus
+from megamarket.domain import CardToPars, SellerInfo, SellerStatus
+from megamarket.repositories.sellers import SellerRepository
 from megamarket.schemas.sellers import (
     SellerImport,
     SellersImportResponse,
@@ -66,6 +67,49 @@ class SellerServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(seller.status, SellerStatus.CORRECT)
         repository.commit.assert_awaited_once_with()
         repository.rollback.assert_not_awaited()
+
+
+class SellerRepositoryTests(unittest.IsolatedAsyncioTestCase):
+    async def test_empty_recheck_fields_do_not_erase_collected_data(self):
+        seller = Sellers(
+            seller_id="147929",
+            name="embeq.store",
+            link_to_seller="https://megamarket.ru/shop/embeq-store/",
+            link_to_card="https://megamarket.ru/card_147929/",
+            status=SellerStatus.INCORRECT,
+            email="old@example.com",
+            ogrn="1234567890123",
+            official_name="Старое официальное название",
+            inn="1234567890",
+            phone="+7 900 000-00-00",
+            rating=4.8,
+        )
+        session = MagicMock()
+        session.get = AsyncMock(return_value=seller)
+        session.flush = AsyncMock()
+
+        await SellerRepository(session).confirm(
+            seller.seller_id,
+            SellerInfo(
+                seller_id=seller.seller_id,
+                name=seller.name,
+                official_name="Новое официальное название",
+            ),
+            "https://megamarket.ru/shop/embeqstore/",
+        )
+
+        self.assertEqual(
+            seller.link_to_seller,
+            "https://megamarket.ru/shop/embeqstore/",
+        )
+        self.assertEqual(seller.email, "old@example.com")
+        self.assertEqual(seller.ogrn, "1234567890123")
+        self.assertEqual(seller.official_name, "Новое официальное название")
+        self.assertEqual(seller.inn, "1234567890")
+        self.assertEqual(seller.phone, "+7 900 000-00-00")
+        self.assertEqual(seller.rating, 4.8)
+        self.assertIs(seller.status, SellerStatus.CORRECT)
+        session.flush.assert_awaited_once_with()
 
 
 class ParserServiceTests(unittest.IsolatedAsyncioTestCase):

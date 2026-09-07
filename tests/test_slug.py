@@ -14,6 +14,10 @@ class SlugifyCardTests(unittest.TestCase):
             "yuniks-fitnes-dbs",
         )
 
+    def test_uses_megamarket_cyrillic_transliteration(self):
+        self.assertEqual(SlugifyCard._slugify("Перекрёсток"), "perekrestok")
+        self.assertEqual(SlugifyCard._slugify("ХОБОТ"), "hobot")
+
 
 if __name__ == "__main__":
     unittest.main()
