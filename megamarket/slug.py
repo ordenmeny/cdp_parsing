@@ -33,7 +33,7 @@ _CYRILLIC_TO_LATIN = str.maketrans(
         "у": "u",
         "ф": "f",
         "х": "h",
-        "ц": "ts",
+        "ц": "c",
         "ч": "ch",
         "ш": "sh",
         "щ": "shch",
