@@ -3,14 +3,16 @@
 
 ### 1. Установить необходимые программы
 
-Откройте PowerShell и выполните:
+Откройте PowerShell и выполните установку git:
 ```powershell
 winget install --id Git.Git -e --source winget
-winget install --id GNU.Nano -e --source winget
+```
+Другой вариант: установить git по ссылке: https://git-scm.com/install/windows
+
+Теперь установите пакетный менеджер Python uv:
+```powershell
 powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
-
-`nano` — простой текстовый редактор, им создаётся файл настроек на шаге 3.
 
 Установите Google Chrome, если он ещё не установлен. После установки закройте
 PowerShell и откройте его снова.
@@ -26,13 +28,13 @@ cd MegamarketControl
 ### 3. Создать файл настроек
 
 Получите у администратора токен доступа. Затем из папки `MegamarketControl`
-откройте новый файл:
+создайте файл .env:
 
 ```powershell
-nano .env
+New-Item .env -ItemType File
 ```
 
-Впишите пять строк, подставив полученный токен вместо `<токен>`:
+Откройте .env (например, через блокнот) и впишите пять строк, подставив полученный токен вместо `<токен>`:
 
 ```dotenv
 PARSER_REMOTE_API_URL=http://10.0.4.69:8001
@@ -42,18 +44,10 @@ PARSER_BROWSER_HOST=127.0.0.1
 PARSER_BROWSER_PORT=51112
 ```
 
-Токен длинный, набирать его руками не нужно — скопируйте и вставьте правой
-кнопкой мыши. Угловые скобки не оставляйте.
-
-Сохраните и закройте файл: нажмите `Ctrl+O`, затем `Enter`, затем `Ctrl+X`.
-
 Проверьте, что получилось:
 
 ```powershell
 Get-Content .env
-```
-
-Должны появиться те же пять строк, а в строке с токеном — сам токен.
 
 Проверьте доступность сервера:
 
