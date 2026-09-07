@@ -1,4 +1,10 @@
-from pydantic import BaseModel, Field, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
 
 from megamarket.domain import SellerInfo, SellerObservationState
 from megamarket.schemas.sellers import DefineSellersResponse
@@ -8,6 +14,28 @@ class SellerCandidate(BaseModel):
     seller_id: str
     name: str
     link_to_seller: str
+
+
+class SellerSelectionRequest(BaseModel):
+    """Явный список продавцов для проверки."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    seller_ids: list[str] = Field(min_length=1)
+
+    @field_validator("seller_ids")
+    @classmethod
+    def normalize_seller_ids(cls, values: list[str]) -> list[str]:
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for value in values:
+            seller_id = value.strip()
+            if not seller_id:
+                raise ValueError("Идентификатор продавца не может быть пустым")
+            if seller_id not in seen:
+                normalized.append(seller_id)
+                seen.add(seller_id)
+        return normalized
 
 
 class SellerJobStartResponse(BaseModel):

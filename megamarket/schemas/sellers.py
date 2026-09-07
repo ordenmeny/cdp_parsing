@@ -3,6 +3,19 @@ from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 from megamarket.domain import SellerStatus
 
 
+class SellerImport(BaseModel):
+    """Минимальные данные продавца из первоначального парсинга."""
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    name: str = Field(min_length=1)
+    link_to_card: str = Field(min_length=1)
+
+
+class SellersImportResponse(BaseModel):
+    added: int
+
+
 class SellerResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

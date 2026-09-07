@@ -6,12 +6,14 @@ from parsek_cdp import Browser, ProtocolError
 from parsek_cdp.core.target import Target
 from websockets.exceptions import ConnectionClosed
 
-from megamarket.cdp.cdp_metrics import collect_cdp_metrics
 from megamarket.cdp.browser_endpoint import connect_browser
+from megamarket.cdp.cdp_metrics import collect_cdp_metrics
 from megamarket.cdp.parsek_compat import install_parsek_target_race_fix
+from megamarket.clients.remote_api import RemoteApiClient
 from megamarket.config import settings
 from megamarket.domain import CardToPars
 from megamarket.parsers.scrolling import MegamarketScrollPage
+from megamarket.schemas.sellers import SellerImport
 from megamarket.storage.report import ExcelReport
 from megamarket.utils import ScrollCommand, parse_input_command
 
@@ -20,6 +22,7 @@ from megamarket.utils import ScrollCommand, parse_input_command
 class ParseResult:
     query: str
     cards_count: int
+    sellers_added: int
     output_path: Path
 
 
@@ -32,6 +35,9 @@ class InvalidParseCommand(ValueError):
 
 
 class ParserService:
+    def __init__(self, remote: RemoteApiClient) -> None:
+        self.remote = remote
+
     async def parse(self, command_value: str) -> ParseResult:
         try:
             command = parse_input_command(command_value)
@@ -55,16 +61,6 @@ class ParserService:
                 )
                 cards = await parser.parse(command.query)
 
-            output_path = ExcelReport(
-                cards,
-                model=CardToPars,
-                query=command.query,
-            ).save()
-            return ParseResult(
-                query=command.query,
-                cards_count=len(cards),
-                output_path=output_path,
-            )
         finally:
             if page is not None and (parser is None or not parser.interrupted):
                 try:
@@ -80,6 +76,22 @@ class ParserService:
                 await Target.close(browser)
             except (ConnectionError, ConnectionClosed, ProtocolError):
                 pass
+
+        imported = await self.remote.import_sellers([
+            SellerImport(name=card.seller, link_to_card=card.card_link)
+            for card in cards
+        ])
+        output_path = ExcelReport(
+            cards,
+            model=CardToPars,
+            query=command.query,
+        ).save()
+        return ParseResult(
+            query=command.query,
+            cards_count=len(cards),
+            sellers_added=imported.added,
+            output_path=output_path,
+        )
 
     @staticmethod
     async def _connect_browser() -> Browser:

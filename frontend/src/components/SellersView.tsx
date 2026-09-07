@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { getSellers, setSellers } from "../api";
+import { defineSelectedSellers, getSellers, setSellers } from "../api";
 import type { Seller, SellerStatus } from "../types";
 import {
   ChevronIcon,
   EditIcon,
   ExternalIcon,
+  PlayIcon,
   RefreshIcon,
   SearchIcon,
   StoreIcon,
@@ -33,6 +34,7 @@ export function SellersView({ notify }: { notify: Notify }) {
   const [editing, setEditing] = useState<Seller | null>(null);
   const [loading, setLoading] = useState(true);
   const [updating, setUpdating] = useState(false);
+  const [checking, setChecking] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
 
   const load = useCallback(
@@ -140,6 +142,23 @@ export function SellersView({ notify }: { notify: Notify }) {
     }
   };
 
+  const checkSelected = async () => {
+    const sellerIds = [...selected];
+    if (sellerIds.length === 0) return;
+    setChecking(true);
+    try {
+      const result = await defineSelectedSellers(sellerIds);
+      notify(
+        `Проверено: ${result.processed}. Корректных: ${result.confirmed}, некорректных: ${result.incorrect}`,
+      );
+      await load(filter, true);
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "Проверка завершилась с ошибкой", "error");
+    } finally {
+      setChecking(false);
+    }
+  };
+
   const replaceSeller = (updated: Seller) => {
     setEditing(null);
     notify(`Продавец «${updated.name}» обновлён`);
@@ -219,8 +238,22 @@ export function SellersView({ notify }: { notify: Notify }) {
           <div className="bulk-bar">
             <strong>Выбрано: {selected.size}</strong>
             <span className="bulk-bar__separator" />
+            <button
+              className="button button--small button--primary"
+              type="button"
+              disabled={checking || updating}
+              onClick={() => void checkSelected()}
+            >
+              {checking ? <span className="spinner" /> : <PlayIcon />}
+              {checking ? "Идёт проверка…" : "Проверить выбранных"}
+            </button>
+            <span className="bulk-bar__separator" />
             <span>Изменить статус на</span>
-            <select value={bulkStatus} onChange={(event) => setBulkStatus(event.target.value as SellerStatus)}>
+            <select
+              value={bulkStatus}
+              disabled={checking || updating}
+              onChange={(event) => setBulkStatus(event.target.value as SellerStatus)}
+            >
               <option value="correct">Корректный</option>
               <option value="unconfirmed">Ещё не проверен</option>
               <option value="incorrect">Некорректный</option>
@@ -228,13 +261,18 @@ export function SellersView({ notify }: { notify: Notify }) {
             <button
               className="button button--small button--primary"
               type="button"
-              disabled={updating}
+              disabled={checking || updating}
               onClick={() => void applyBulkStatus()}
             >
               {updating ? <span className="spinner" /> : null}
               Применить
             </button>
-            <button className="text-button" type="button" onClick={() => setSelected(new Set())}>
+            <button
+              className="text-button"
+              type="button"
+              disabled={checking || updating}
+              onClick={() => setSelected(new Set())}
+            >
               Отменить выбор
             </button>
           </div>

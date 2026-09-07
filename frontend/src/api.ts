@@ -112,3 +112,13 @@ export async function defineSellers(
   }
   return (await response.json()) as DefineSellersResult;
 }
+
+export async function defineSelectedSellers(
+  sellerIds: string[],
+): Promise<DefineSellersResult> {
+  return request<DefineSellersResult>("/define_sellers/selected", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ seller_ids: sellerIds }),
+  });
+}

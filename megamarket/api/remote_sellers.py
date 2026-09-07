@@ -20,8 +20,14 @@ from megamarket.schemas.seller_jobs import (
     SellerJobStartResponse,
     SellerObservation,
     SellerObservationResponse,
+    SellerSelectionRequest,
 )
-from megamarket.schemas.sellers import SellerResponse, SellerUpdate
+from megamarket.schemas.sellers import (
+    SellerImport,
+    SellerResponse,
+    SellersImportResponse,
+    SellerUpdate,
+)
 from megamarket.services.sellers import (
     SellerConflictError,
     SellerJobStateError,
@@ -43,6 +49,19 @@ async def get_sellers(
 ) -> list[SellerResponse]:
     sellers = await service.get_sellers(status)
     return [SellerResponse.model_validate(seller) for seller in sellers]
+
+
+@router.post("/sellers/import", response_model=SellersImportResponse)
+async def import_sellers(
+        candidates: list[SellerImport],
+        _: RemoteAuthDep,
+        service: SellerServiceDep,
+) -> SellersImportResponse:
+    try:
+        added = await service.add_new(candidates)
+    except SellerConflictError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    return SellersImportResponse(added=added)
 
 
 @router.patch("/sellers", response_model=list[SellerResponse])
@@ -88,6 +107,24 @@ async def start_seller_job(
         if workbook is not None:
             workbook.cleanup()
         raise
+
+
+@router.post(
+    "/seller-jobs/selected",
+    response_model=SellerJobStartResponse,
+)
+async def start_selected_seller_job(
+        request: SellerSelectionRequest,
+        _: RemoteAuthDep,
+        service: SellerJobServiceDep,
+) -> SellerJobStartResponse:
+    try:
+        return await service.start(
+            limit=len(request.seller_ids),
+            seller_ids=request.seller_ids,
+        )
+    except SellerJobStateError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
 
 
 @router.post(

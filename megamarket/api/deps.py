@@ -9,16 +9,18 @@ from megamarket.services.local_sellers import LocalSellerService
 from megamarket.services.parser import ParserService
 
 
-def get_parser_service() -> ParserService:
-    return ParserService()
-
-
 async def get_remote_api_client() -> AsyncIterator[RemoteApiClient]:
     client = RemoteApiClient(get_remote_api_settings())
     try:
         yield client
     finally:
         await client.close()
+
+
+def get_parser_service(
+        remote: Annotated[RemoteApiClient, Depends(get_remote_api_client)],
+) -> ParserService:
+    return ParserService(remote)
 
 
 def get_local_seller_service(

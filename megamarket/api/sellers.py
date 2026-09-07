@@ -6,6 +6,7 @@ from fastapi import APIRouter, File, HTTPException, Query, Response, UploadFile
 from megamarket.api.deps import LocalSellerServiceDep
 from megamarket.clients.remote_api import RemoteApiError, RemoteApiUnavailable
 from megamarket.domain import SellerStatus
+from megamarket.schemas.seller_jobs import SellerSelectionRequest
 from megamarket.schemas.sellers import (
     DefineSellersResponse,
     SellerResponse,
@@ -81,6 +82,37 @@ async def define_sellers(
         content=result.file.content,
         media_type=result.file.media_type,
         headers=headers,
+    )
+
+
+@router.post(
+    "/define_sellers/selected",
+    response_model=DefineSellersResponse,
+)
+async def define_selected_sellers(
+        request: SellerSelectionRequest,
+        service: LocalSellerServiceDep,
+) -> DefineSellersResponse:
+    try:
+        result = await service.define_sellers(
+            limit=len(request.seller_ids),
+            file=None,
+            seller_ids=request.seller_ids,
+        )
+    except (RemoteApiError, RemoteApiUnavailable) as error:
+        raise _http_error(error) from error
+    except RuntimeError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+
+    summary = result.summary
+    return DefineSellersResponse(
+        added=summary.added,
+        selected=summary.selected,
+        processed=summary.processed,
+        confirmed=summary.confirmed,
+        incorrect=summary.incorrect,
+        unknown=summary.unknown,
+        stopped_reason=summary.stopped_reason,
     )
 
 

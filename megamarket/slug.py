@@ -72,4 +72,8 @@ class SlugifyCard:
         transliterated = value.lower().translate(_CYRILLIC_TO_LATIN)
         normalized = unicodedata.normalize("NFKD", transliterated)
         ascii_value = normalized.encode("ascii", "ignore").decode("ascii")
-        return re.sub(r"[^a-z0-9]+", "-", ascii_value).strip("-")
+        # Пунктуация внутри названия магазина не является разделителем в
+        # слагах Megamarket: ``Кувалда.ру`` превращается в ``kuvaldaru``.
+        # Пробелы и дефисы при этом по-прежнему разделяют слова.
+        without_punctuation = re.sub(r"[^a-z0-9\s_-]+", "", ascii_value)
+        return re.sub(r"[\s_-]+", "-", without_punctuation).strip("-")

@@ -16,9 +16,10 @@ from megamarket.schemas.seller_jobs import (
     SellerJobFinishResponse,
     SellerJobStartResponse,
     SellerObservation,
+    SellerSelectionRequest,
 )
 from megamarket.services.local_sellers import LocalSellerService
-from megamarket.services.sellers import SellerJobService
+from megamarket.services.sellers import SellerJobService, SellerJobStateError
 
 
 class ApiBoundaryTests(unittest.TestCase):
@@ -130,8 +131,107 @@ class LocalSellerServiceTests(unittest.IsolatedAsyncioTestCase):
         remote.finish_job.assert_awaited_once_with("job-1", "")
         self.assertEqual(result.summary.incorrect, 1)
 
+    async def test_starts_job_for_selected_seller_ids(self):
+        remote = MagicMock()
+        remote.start_selected_job = AsyncMock(return_value=SellerJobStartResponse(
+            job_id="job-selected",
+            added=0,
+            filename=None,
+            sellers=[],
+        ))
+        remote.finish_job = AsyncMock(return_value=SellerJobFinishResponse(
+            job_id="job-selected",
+            added=0,
+            selected=0,
+            processed=0,
+            confirmed=0,
+            incorrect=0,
+            unknown=0,
+            stopped_reason="",
+            filename=None,
+            has_file=False,
+        ))
+
+        await LocalSellerService(remote).define_sellers(
+            limit=2,
+            file=None,
+            seller_ids=["20", "10"],
+        )
+
+        remote.start_selected_job.assert_awaited_once_with(["20", "10"])
+        remote.start_job.assert_not_called()
+
+
+class SellerSelectionRequestTests(unittest.TestCase):
+    def test_strips_ids_and_removes_duplicates_preserving_order(self):
+        request = SellerSelectionRequest(
+            seller_ids=[" 20 ", "10", "20"],
+        )
+
+        self.assertEqual(request.seller_ids, ["20", "10"])
+
 
 class SellerJobServiceTests(unittest.IsolatedAsyncioTestCase):
+    async def test_creates_job_for_exact_selected_sellers(self):
+        first = Sellers(
+            seller_id="20",
+            name="Первый",
+            link_to_seller="https://megamarket.ru/shop/first/",
+            link_to_card="https://megamarket.ru/card_20/",
+            status=SellerStatus.CORRECT,
+        )
+        second = Sellers(
+            seller_id="10",
+            name="Второй",
+            link_to_seller="https://megamarket.ru/shop/second/",
+            link_to_card="https://megamarket.ru/card_10/",
+            status=SellerStatus.INCORRECT,
+        )
+        repository = MagicMock()
+        repository.create_job = AsyncMock(return_value=[first, second])
+        repository.commit = AsyncMock()
+        repository.rollback = AsyncMock()
+
+        result = await SellerJobService(repository).start(
+            limit=2,
+            seller_ids=["20", "10"],
+        )
+
+        job = repository.create_job.await_args.args[0]
+        repository.create_job.assert_awaited_once_with(
+            job,
+            2,
+            seller_ids=["20", "10"],
+        )
+        self.assertEqual(
+            [seller.seller_id for seller in result.sellers],
+            ["20", "10"],
+        )
+        repository.commit.assert_awaited_once_with()
+        repository.rollback.assert_not_awaited()
+
+    async def test_rejects_unavailable_selected_seller(self):
+        seller = Sellers(
+            seller_id="20",
+            name="Доступный",
+            link_to_seller="https://megamarket.ru/shop/available/",
+            link_to_card="https://megamarket.ru/card_20/",
+            status=SellerStatus.UNCONFIRMED,
+        )
+        repository = MagicMock()
+        repository.create_job = AsyncMock(return_value=[seller])
+        repository.commit = AsyncMock()
+        repository.rollback = AsyncMock()
+
+        with self.assertRaisesRegex(SellerJobStateError, "10"):
+            await SellerJobService(repository).start(
+                limit=2,
+                seller_ids=["20", "10"],
+            )
+
+        repository.commit.assert_not_awaited()
+        repository.rollback.assert_awaited_once_with()
+
     async def test_different_page_seller_id_is_marked_incorrect(self):
         job = SellerJob(
             job_id="job-1",

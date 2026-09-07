@@ -13,8 +13,14 @@ from megamarket.schemas.seller_jobs import (
     SellerJobStartResponse,
     SellerObservation,
     SellerObservationResponse,
+    SellerSelectionRequest,
 )
-from megamarket.schemas.sellers import SellerResponse, SellerUpdate
+from megamarket.schemas.sellers import (
+    SellerImport,
+    SellerResponse,
+    SellersImportResponse,
+    SellerUpdate,
+)
 
 
 class RemoteApiError(RuntimeError):
@@ -61,6 +67,17 @@ class RemoteApiClient:
         response = await self._request("GET", "/api/v1/sellers", params=params)
         return [SellerResponse.model_validate(item) for item in response.json()]
 
+    async def import_sellers(
+            self,
+            candidates: list[SellerImport],
+    ) -> SellersImportResponse:
+        response = await self._request(
+            "POST",
+            "/api/v1/sellers/import",
+            json=[candidate.model_dump(mode="json") for candidate in candidates],
+        )
+        return SellersImportResponse.model_validate(response.json())
+
     async def set_sellers(
             self,
             updates: list[SellerUpdate],
@@ -99,6 +116,18 @@ class RemoteApiClient:
         finally:
             if file is not None:
                 await file.close()
+        return SellerJobStartResponse.model_validate(response.json())
+
+    async def start_selected_job(
+            self,
+            seller_ids: list[str],
+    ) -> SellerJobStartResponse:
+        request = SellerSelectionRequest(seller_ids=seller_ids)
+        response = await self._request(
+            "POST",
+            "/api/v1/seller-jobs/selected",
+            json=request.model_dump(mode="json"),
+        )
         return SellerJobStartResponse.model_validate(response.json())
 
     async def observe(

@@ -70,8 +70,9 @@ class SellerRepository:
             self,
             job: SellerJob,
             limit: int,
+            seller_ids: Sequence[str] | None = None,
     ) -> list[Sellers]:
-        """Создать задание и зарезервировать ещё не занятых продавцов."""
+        """Создать задание и зарезервировать доступных продавцов."""
         active_reservation = exists(
             select(SellerJobItem.job_id)
             .join(SellerJob, SellerJob.job_id == SellerJobItem.job_id)
@@ -81,17 +82,35 @@ class SellerRepository:
                 SellerJob.expires_at > func.now(),
             )
         )
-        statement = (
-            select(Sellers)
-            .where(
-                Sellers.status == SellerStatus.UNCONFIRMED,
-                ~active_reservation,
+        if seller_ids is None:
+            statement = (
+                select(Sellers)
+                .where(
+                    Sellers.status == SellerStatus.UNCONFIRMED,
+                    ~active_reservation,
+                )
+                .order_by(Sellers.seller_id)
+                .limit(limit)
+                .with_for_update(skip_locked=True)
             )
-            .order_by(Sellers.seller_id)
-            .limit(limit)
-            .with_for_update(skip_locked=True)
-        )
-        sellers = list((await self.session.scalars(statement)).all())
+            sellers = list((await self.session.scalars(statement)).all())
+        else:
+            requested_ids = list(dict.fromkeys(seller_ids))
+            statement = (
+                select(Sellers)
+                .where(
+                    Sellers.seller_id.in_(requested_ids),
+                    ~active_reservation,
+                )
+                .with_for_update(skip_locked=True)
+            )
+            selected = (await self.session.scalars(statement)).all()
+            selected_by_id = {seller.seller_id: seller for seller in selected}
+            sellers = [
+                selected_by_id[seller_id]
+                for seller_id in requested_ids
+                if seller_id in selected_by_id
+            ]
         self.session.add(job)
         await self.session.flush()
         self.session.add_all([

@@ -15,7 +15,7 @@ from megamarket.schemas.seller_jobs import (
     SellerObservation,
     SellerObservationResponse,
 )
-from megamarket.schemas.sellers import SellerUpdate
+from megamarket.schemas.sellers import SellerImport, SellerUpdate
 from megamarket.slug import SlugifyCard
 from megamarket.storage.report import ExcelCardsReport
 from megamarket.utils import normalize_link, normalize_text
@@ -44,6 +44,23 @@ class SellerService:
             status: SellerStatus | None = None,
     ) -> list[Sellers]:
         return await self.repository.get_all(status)
+
+    async def add_new(self, candidates: list[SellerImport]) -> int:
+        """Сохранить ещё неизвестных продавцов первоначального парсинга."""
+        try:
+            added = await self.repository.add_new(
+                self._seller_models(candidates)
+            )
+            await self.repository.commit()
+            return added
+        except IntegrityError as error:
+            await self.repository.rollback()
+            raise SellerConflictError(
+                "Новые продавцы конфликтуют с существующими записями"
+            ) from error
+        except Exception:
+            await self.repository.rollback()
+            raise
 
     async def set_sellers(
             self,
@@ -76,6 +93,19 @@ class SellerService:
             await self.repository.rollback()
             raise
 
+    @staticmethod
+    def _seller_models(candidates: list[SellerImport]) -> list[Sellers]:
+        return [
+            Sellers(
+                seller_id=normalize_link(candidate.link_to_card),
+                name=normalize_text(candidate.name),
+                link_to_seller=SlugifyCard.link_for_seller(candidate.name),
+                link_to_card=candidate.link_to_card,
+                status=SellerStatus.UNCONFIRMED,
+            )
+            for candidate in candidates
+        ]
+
 
 class SellerJobService:
     """Серверная часть распределённой проверки продавцов."""
@@ -92,9 +122,14 @@ class SellerJobService:
             input_path: Path | None = None,
             output_path: Path | None = None,
             filename: str | None = None,
+            seller_ids: list[str] | None = None,
     ) -> SellerJobStartResponse:
         report: ExcelCardsReport | None = None
         try:
+            if seller_ids is not None and input_path is not None:
+                raise ValueError(
+                    "Нельзя одновременно загрузить файл и выбрать продавцов"
+                )
             added = 0
             if input_path is not None:
                 if output_path is None or filename is None:
@@ -113,7 +148,25 @@ class SellerJobService:
                 added=added,
                 expires_at=now + self.JOB_TTL,
             )
-            sellers = await self.repository.create_job(job, limit)
+            if seller_ids is None:
+                sellers = await self.repository.create_job(job, limit)
+            else:
+                sellers = await self.repository.create_job(
+                    job,
+                    len(seller_ids),
+                    seller_ids=seller_ids,
+                )
+                selected_ids = {seller.seller_id for seller in sellers}
+                unavailable = [
+                    seller_id
+                    for seller_id in seller_ids
+                    if seller_id not in selected_ids
+                ]
+                if unavailable:
+                    raise SellerJobStateError(
+                        "Продавцы не найдены или уже проверяются: "
+                        + ", ".join(unavailable)
+                    )
             await self.repository.commit()
             return SellerJobStartResponse(
                 job_id=job.job_id,
@@ -268,18 +321,11 @@ class SellerJobService:
 
     @staticmethod
     def _sellers_from_report(report: ExcelCardsReport) -> list[Sellers]:
-        return [
-            Sellers(
-                seller_id=normalize_link(card.card_link),
-                name=normalize_text(card.seller),
-                link_to_seller=SlugifyCard.link_for_seller(
-                    normalize_text(card.seller)
-                ),
-                link_to_card=card.card_link,
-                status=SellerStatus.UNCONFIRMED,
-            )
+        candidates = [
+            SellerImport(name=card.seller, link_to_card=card.card_link)
             for card in report.cards
         ]
+        return SellerService._seller_models(candidates)
 
     async def _set_report_links(self, report: ExcelCardsReport) -> None:
         seller_ids = {normalize_link(card.card_link) for card in report.cards}

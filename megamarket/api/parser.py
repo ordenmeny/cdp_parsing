@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 
 from megamarket.api.deps import ParserServiceDep
+from megamarket.clients.remote_api import RemoteApiError, RemoteApiUnavailable
 from megamarket.schemas.parser import ParseRequest
 from megamarket.services.parser import (
     InvalidParseCommand,
@@ -23,6 +24,13 @@ async def parse(
         raise HTTPException(status_code=422, detail=str(error)) from error
     except ParserBrowserUnavailable as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
+    except RemoteApiError as error:
+        raise HTTPException(
+            status_code=error.status_code,
+            detail=str(error),
+        ) from error
+    except RemoteApiUnavailable as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
 
     return FileResponse(
         result.output_path,
@@ -30,5 +38,8 @@ async def parse(
         media_type=(
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         ),
-        headers={"X-Cards-Collected": str(result.cards_count)},
+        headers={
+            "X-Cards-Collected": str(result.cards_count),
+            "X-Sellers-Added": str(result.sellers_added),
+        },
     )

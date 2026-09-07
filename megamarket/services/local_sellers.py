@@ -48,8 +48,13 @@ class LocalSellerService:
             *,
             limit: int,
             file: UploadFile | None,
+            seller_ids: list[str] | None = None,
     ) -> LocalDefineResult:
-        job = await self.remote.start_job(limit=limit, file=file)
+        job = (
+            await self.remote.start_selected_job(seller_ids)
+            if seller_ids is not None
+            else await self.remote.start_job(limit=limit, file=file)
+        )
         stopped_reason = ""
         browser: Browser | None = None
         try:

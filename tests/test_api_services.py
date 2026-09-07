@@ -4,12 +4,46 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from megamarket.db.models import Sellers
 from megamarket.domain import CardToPars, SellerStatus
-from megamarket.schemas.sellers import SellerUpdate
+from megamarket.schemas.sellers import (
+    SellerImport,
+    SellersImportResponse,
+    SellerUpdate,
+)
 from megamarket.services.parser import ParserService
 from megamarket.services.sellers import SellerService
 
 
 class SellerServiceTests(unittest.IsolatedAsyncioTestCase):
+    async def test_adds_parsed_seller_as_unconfirmed(self):
+        repository = MagicMock()
+        repository.add_new = AsyncMock(return_value=1)
+        repository.commit = AsyncMock()
+        repository.rollback = AsyncMock()
+
+        added = await SellerService(repository).add_new([
+            SellerImport(
+                name="  Кувалда.ру  ",
+                link_to_card=(
+                    "https://megamarket.ru/catalog/details/"
+                    "instrument-100000000001_147929/"
+                ),
+            )
+        ])
+
+        self.assertEqual(added, 1)
+        candidates = repository.add_new.await_args.args[0]
+        self.assertEqual(len(candidates), 1)
+        seller = candidates[0]
+        self.assertEqual(seller.seller_id, "147929")
+        self.assertEqual(seller.name, "Кувалда.ру")
+        self.assertEqual(
+            seller.link_to_seller,
+            "https://megamarket.ru/shop/kuvaldaru/",
+        )
+        self.assertIs(seller.status, SellerStatus.UNCONFIRMED)
+        repository.commit.assert_awaited_once_with()
+        repository.rollback.assert_not_awaited()
+
     async def test_updates_seller_by_id(self):
         seller = Sellers(
             seller_id="147929",
@@ -54,6 +88,10 @@ class ParserServiceTests(unittest.IsolatedAsyncioTestCase):
         scrolling_parser.interrupted = False
         report = MagicMock()
         report.save.return_value = Path("output/result.xlsx")
+        remote = MagicMock()
+        remote.import_sellers = AsyncMock(
+            return_value=SellersImportResponse(added=1)
+        )
 
         with (
             patch.object(
@@ -74,7 +112,7 @@ class ParserServiceTests(unittest.IsolatedAsyncioTestCase):
                 new=AsyncMock(),
             ),
         ):
-            result = await ParserService().parse("scrolling||makita")
+            result = await ParserService(remote).parse("scrolling||makita")
 
         scrolling_parser.parse.assert_awaited_once_with("makita")
         report_class.assert_called_once_with(
@@ -83,8 +121,14 @@ class ParserServiceTests(unittest.IsolatedAsyncioTestCase):
             query="makita",
         )
         report.save.assert_called_once_with()
+        remote.import_sellers.assert_awaited_once()
+        imported = remote.import_sellers.await_args.args[0]
+        self.assertEqual(len(imported), 1)
+        self.assertEqual(imported[0].name, "Продавец")
+        self.assertEqual(imported[0].link_to_card, card.card_link)
         page.cdp.Page.close.assert_awaited_once_with()
         self.assertEqual(result.cards_count, 1)
+        self.assertEqual(result.sellers_added, 1)
         self.assertEqual(result.output_path, Path("output/result.xlsx"))
 
     async def test_rejects_non_scrolling_command_before_opening_browser(self):
@@ -94,7 +138,7 @@ class ParserServiceTests(unittest.IsolatedAsyncioTestCase):
                 new=AsyncMock(),
         ) as connect:
             with self.assertRaisesRegex(ValueError, "scrolling"):
-                await ParserService().parse("makita")
+                await ParserService(MagicMock()).parse("makita")
 
         connect.assert_not_awaited()
 
