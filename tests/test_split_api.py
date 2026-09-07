@@ -175,15 +175,15 @@ class SellerJobServiceTests(unittest.IsolatedAsyncioTestCase):
     async def test_creates_job_for_exact_selected_sellers(self):
         first = Sellers(
             seller_id="20",
-            name="Первый",
-            link_to_seller="https://megamarket.ru/shop/first/",
+            name="Verified.Store",
+            link_to_seller="https://megamarket.ru/shop/canonical-link/",
             link_to_card="https://megamarket.ru/card_20/",
             status=SellerStatus.CORRECT,
         )
         second = Sellers(
             seller_id="10",
-            name="Второй",
-            link_to_seller="https://megamarket.ru/shop/second/",
+            name="embeq.store",
+            link_to_seller="https://megamarket.ru/shop/embeq-store/",
             link_to_card="https://megamarket.ru/card_10/",
             status=SellerStatus.INCORRECT,
         )
@@ -206,6 +206,14 @@ class SellerJobServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             [seller.seller_id for seller in result.sellers],
             ["20", "10"],
+        )
+        self.assertEqual(
+            result.sellers[0].link_to_seller,
+            "https://megamarket.ru/shop/canonical-link/",
+        )
+        self.assertEqual(
+            result.sellers[1].link_to_seller,
+            "https://megamarket.ru/shop/embeqstore/",
         )
         repository.commit.assert_awaited_once_with()
         repository.rollback.assert_not_awaited()
@@ -231,6 +239,66 @@ class SellerJobServiceTests(unittest.IsolatedAsyncioTestCase):
 
         repository.commit.assert_not_awaited()
         repository.rollback.assert_awaited_once_with()
+
+    async def test_rechecks_incorrect_seller_as_correct(self):
+        job = SellerJob(
+            job_id="job-recheck",
+            status="active",
+            added=0,
+            expires_at=datetime.now(UTC) + timedelta(minutes=10),
+        )
+        seller = Sellers(
+            seller_id="147929",
+            name="embeq.store",
+            link_to_seller="https://megamarket.ru/shop/embeqstore/",
+            link_to_card="https://megamarket.ru/card_147929/",
+            status=SellerStatus.INCORRECT,
+        )
+        item = SellerJobItem(
+            job_id=job.job_id,
+            seller_id=seller.seller_id,
+            position=0,
+            processed=False,
+        )
+        repository = MagicMock()
+        repository.get_job = AsyncMock(return_value=job)
+        repository.get_job_item = AsyncMock(return_value=item)
+        repository.get_by_identity = AsyncMock(return_value=seller)
+
+        async def confirm(*_args, **_kwargs):
+            seller.status = SellerStatus.CORRECT
+
+        repository.confirm = AsyncMock(side_effect=confirm)
+        repository.mark_job_item = AsyncMock()
+        repository.commit = AsyncMock()
+        repository.rollback = AsyncMock()
+
+        observation = SellerObservation.model_validate({
+            "seller_id": seller.seller_id,
+            "state": "found",
+            "info": {
+                "seller_id": seller.seller_id,
+                "name": seller.name,
+                "slug": "embeqstore",
+            },
+        })
+        result = await SellerJobService(repository).observe(
+            job.job_id,
+            observation,
+        )
+
+        repository.confirm.assert_awaited_once()
+        self.assertEqual(
+            repository.confirm.await_args.args[2],
+            "https://megamarket.ru/shop/embeqstore/",
+        )
+        repository.mark_job_item.assert_awaited_once_with(
+            job.job_id,
+            seller.seller_id,
+            "correct",
+        )
+        self.assertIs(seller.status, SellerStatus.CORRECT)
+        self.assertEqual(result.outcome, "correct")
 
     async def test_different_page_seller_id_is_marked_incorrect(self):
         job = SellerJob(

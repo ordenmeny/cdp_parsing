@@ -167,6 +167,16 @@ class SellerJobService:
                         "Продавцы не найдены или уже проверяются: "
                         + ", ".join(unavailable)
                     )
+
+            # У старых непроверенных записей в БД могла сохраниться ссылка,
+            # построенная прежним слагификатором (например, embeq-store).
+            # Перед каждой новой попыткой пересчитываем только предполагаемые
+            # ссылки. Подтверждённую каноническую ссылку менять нельзя.
+            for seller in sellers:
+                if seller.status is not SellerStatus.CORRECT:
+                    seller.link_to_seller = SlugifyCard.link_for_seller(
+                        seller.name
+                    )
             await self.repository.commit()
             return SellerJobStartResponse(
                 job_id=job.job_id,
