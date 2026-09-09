@@ -263,3 +263,53 @@ SELLER_STATE_SCRIPT = r"""
     };
 })()
 """
+
+
+@dataclass(frozen=True, slots=True)
+class ClickPoint:
+    """Точка в окне, по которой можно нажать, не промахнувшись мимо элемента."""
+
+    x: float = 0.0
+    y: float = 0.0
+    ok: bool = False
+    # Что оказалось в этой точке, когда попасть не вышло, — для лога.
+    hit: str = ""
+
+    @classmethod
+    def from_raw(cls, value: object) -> "ClickPoint":
+        if not isinstance(value, dict):
+            return cls()
+        try:
+            x = float(value.get("x") or 0)
+            y = float(value.get("y") or 0)
+        except (TypeError, ValueError):
+            return cls()
+        return cls(x=x, y=y, ok=bool(value.get("ok")), hit=str(value.get("hit") or ""))
+
+
+# Подводит элемент под курсор и проверяет, что в центре элемента находится он
+# сам, а не сосед. Всё одним вызовом: прокрутка, замер и проверка попадания не
+# должны разъезжаться во времени — между ними страница успевает сдвинуться.
+CLICK_POINT_SCRIPT = r"""
+function () {
+    this.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
+    const rect = this.getBoundingClientRect();
+    const x = rect.left + rect.width / 2;
+    const y = rect.top + rect.height / 2;
+    const visible = rect.width > 0 && rect.height > 0
+        && x >= 0 && y >= 0
+        && x <= window.innerWidth && y <= window.innerHeight;
+    const hit = visible ? document.elementFromPoint(x, y) : null;
+    const name = hit
+        ? hit.tagName.toLowerCase() + (hit.className
+            ? "." + String(hit.className).trim().split(/\s+/)[0]
+            : "")
+        : "";
+    return {
+        x: x,
+        y: y,
+        ok: Boolean(hit) && (hit === this || this.contains(hit)),
+        hit: name,
+    };
+}
+"""

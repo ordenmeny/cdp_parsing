@@ -5,6 +5,7 @@ from collections.abc import Sequence
 from urllib.parse import parse_qs, quote, urljoin, urlsplit, urlunsplit
 
 from parsek_cdp import Browser, Element, ElementState, Page, ProtocolError
+from parsek_cdp.cdp.input.types import MouseButton
 from websockets.exceptions import ConnectionClosed
 
 from megamarket.parsers.base_parser import BasePaginatedParser, PageState
@@ -12,7 +13,9 @@ from megamarket.cdp.cdp_metrics import CDPMetrics
 from megamarket.config import settings
 from megamarket.domain import CardToPars, Stock
 from megamarket.cdp.extractors import (
+    CLICK_POINT_SCRIPT,
     CardsExtraction,
+    ClickPoint,
     PageProbe,
     build_cards_extractor_script,
     build_page_probe_script,
@@ -31,6 +34,17 @@ def is_brand_page_url(url: str) -> bool:
     """Ведёт ли фактический URL на страницу бренда Megamarket."""
     path_parts = [part for part in urlsplit(url).path.split("/") if part]
     return bool(path_parts) and path_parts[0] == "brands"
+
+
+# Куда ведут ссылки самих карточек: промах мимо кнопки уносит вкладку именно
+# сюда, потому что карточка в выдаче целиком обёрнута в ссылку на товар.
+PRODUCT_PATH_PREFIXES = (("catalog", "details"), ("promo-page", "details"))
+
+
+def is_product_page_url(url: str) -> bool:
+    """Открыта ли карточка товара вместо выдачи."""
+    path_parts = [part for part in urlsplit(url).path.split("/") if part]
+    return tuple(path_parts[:2]) in PRODUCT_PATH_PREFIXES
 
 
 async def is_blocked_page(page: Page) -> bool:
@@ -72,6 +86,11 @@ class MegamarketParsePage(BasePaginatedParser[CardToPars]):
     CARDS_LOAD_TIMEOUT = 30.0
     CARDS_POLL_INTERVAL = 0.5
     CARDS_STABLE_CHECKS = 3
+
+    # Сколько раз прицеливаться в элемент, если в точке клика оказался сосед,
+    # и сколько ждать между попытками, чтобы вёрстка успела встать на место.
+    CLICK_ATTEMPTS = 3
+    CLICK_SETTLE_DELAY = 0.5
 
     def __init__(
             self,
@@ -211,7 +230,11 @@ class MegamarketParsePage(BasePaginatedParser[CardToPars]):
 
         print("Переключатель «В наличии» найден.")
         if not selected:
-            await control.mouse_click()
+            if not await self._click_element(control, "переключатель «В наличии»"):
+                raise RuntimeError(
+                    "Не удалось нажать переключатель «В наличии»: "
+                    "в точке клика оказался другой элемент."
+                )
             print("Клик по переключателю выполнен. Ждём включения фильтра...")
         # https://megamarket.ru/promo-page/details/#?slug=smartfon-apple-iphone-17-pro-max-512gb-cosmic-orange-bez-rustore-700001132174_254730&merchantId=254730&exclusiveMerchantId=254730&exclusiveWarehouseId=3352735
         try:
@@ -265,6 +288,51 @@ class MegamarketParsePage(BasePaginatedParser[CardToPars]):
             )
 
         return cards
+
+    async def _click_element(self, element: Element, name: str) -> bool:
+        """Нажать по элементу настоящей мышью, убедившись, что попадём в него.
+
+        ``Element.mouse_click`` замеряет координаты, а нажатие отправляет через
+        несколько обращений к браузеру — сдвинувшаяся за это время страница
+        уводит клик в соседний элемент. Рядом с кнопкой «Показать ещё» стоят
+        карточки товаров, каждая целиком ссылка, поэтому промах не теряется, а
+        уносит вкладку на страницу товара. Здесь прокрутка, замер и проверка
+        попадания делаются одним вызовом, и до нажатия остаётся один обмен.
+        """
+        for _ in range(self.CLICK_ATTEMPTS):
+            point = ClickPoint.from_raw(await element.apply(CLICK_POINT_SCRIPT))
+            if not point.ok:
+                print(
+                    f"В точке клика по {name} оказалось другое: "
+                    f"{point.hit or '—'}. Ждём и целимся заново."
+                )
+                await asyncio.sleep(self.CLICK_SETTLE_DELAY)
+                continue
+
+            cdp_input = self.page.cdp.Input
+            await cdp_input.dispatch_mouse_event(
+                type_="mouseMoved",
+                x=point.x,
+                y=point.y,
+            )
+            await cdp_input.dispatch_mouse_event(
+                type_="mousePressed",
+                x=point.x,
+                y=point.y,
+                button=MouseButton.LEFT,
+                click_count=1,
+            )
+            await cdp_input.dispatch_mouse_event(
+                type_="mouseReleased",
+                x=point.x,
+                y=point.y,
+                button=MouseButton.LEFT,
+                click_count=1,
+            )
+            return True
+
+        print(f"Не удалось прицелиться в {name} за {self.CLICK_ATTEMPTS} попытки.")
+        return False
 
     async def _probe_page(self) -> PageProbe:
         raw_probe = await self.page.evaluate(self._page_probe_script)

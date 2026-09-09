@@ -15,7 +15,12 @@ from megamarket import utils
 from megamarket.parsers.base_parser import PageState
 from megamarket.config import settings
 from megamarket.domain import CardToPars
-from megamarket.parsers.parsing import BLOCKED_HEADING, BLOCKED_MESSAGE, MegamarketParsePage
+from megamarket.parsers.parsing import (
+    BLOCKED_HEADING,
+    BLOCKED_MESSAGE,
+    MegamarketParsePage,
+    is_product_page_url,
+)
 
 
 class MegamarketScrollPage(MegamarketParsePage):
@@ -34,6 +39,9 @@ class MegamarketScrollPage(MegamarketParsePage):
     SCROLL_DELTA = 600.0
     SCROLL_STEPS = 4
     SCROLL_STEP_DELAY = 0.35
+    # Сколько ждать остановки прокрутки после последнего оборота колеса.
+    SCROLL_SETTLE_TIMEOUT = 3.0
+    SCROLL_SETTLE_INTERVAL = 0.15
 
     def __init__(
             self,
@@ -46,6 +54,9 @@ class MegamarketScrollPage(MegamarketParsePage):
         super().__init__(page, **kwargs)
         self.number_clicks = number_clicks
         self.more_button_timeout = more_button_timeout
+        # Промах мимо кнопки уводит на карточку товара; сбор после этого
+        # продолжать негде, но собранное отдать надо.
+        self.left_listing = False
 
     async def _find_more_button(self) -> Element | None:
         """Найти кнопку догрузки; её отсутствие означает конец выдачи."""
@@ -69,6 +80,28 @@ class MegamarketScrollPage(MegamarketParsePage):
                 return
             if self.SCROLL_STEP_DELAY:
                 await asyncio.sleep(self.SCROLL_STEP_DELAY)
+        await self._wait_scroll_settled()
+
+    async def _wait_scroll_settled(self) -> None:
+        """Дождаться, пока прокрутка колесом действительно остановится.
+
+        Колесо Chrome докручивает плавно, и анимация переживает следующий
+        программный переход к элементу: замер попадёт в одну точку, а нажатие —
+        уже в другую, уехавшую на сотни пикселей. Именно так клик по «Показать
+        ещё» и оказывается на карточке товара.
+        """
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self.SCROLL_SETTLE_TIMEOUT
+        previous: object = None
+        while True:
+            try:
+                current = await self.page.evaluate("window.scrollY")
+            except ProtocolError:
+                return
+            if current == previous or loop.time() >= deadline:
+                return
+            previous = current
+            await asyncio.sleep(self.SCROLL_SETTLE_INTERVAL)
 
     async def _wait_cards_grew(self, before: int) -> bool:
         """Дождаться прироста карточек после нажатия кнопки."""
@@ -126,7 +159,11 @@ class MegamarketScrollPage(MegamarketParsePage):
 
         before = (await self._probe_page()).cards
         print(f"Нажимаем «Показать ещё» ({clicks + 1}). Карточек сейчас: {before}.")
-        await button.mouse_click()
+        if not await self._click_element(button, "кнопку «Показать ещё»"):
+            return False
+
+        if await self._left_the_listing():
+            return False
 
         if await self._wait_cards_grew(before):
             return True
@@ -146,6 +183,24 @@ class MegamarketScrollPage(MegamarketParsePage):
         )
         return False
 
+    async def _left_the_listing(self) -> bool:
+        """Не ушла ли вкладка с выдачи на карточку товара.
+
+        Прицеливание перед кликом делает промах маловероятным, но не
+        невозможным. Без этой проверки уход выглядел бы как обычный конец
+        выдачи: на странице товара кнопки «Показать ещё» нет, и сбор молча
+        останавливался бы, недобрав карточек.
+        """
+        href = (await self._probe_page()).href
+        if not is_product_page_url(href):
+            return False
+        print(
+            "Клик открыл карточку товара вместо догрузки выдачи: "
+            f"{href}. Останавливаемся и отдаём собранное."
+        )
+        self.left_listing = True
+        return True
+
     async def parse(self, query: str) -> list[CardToPars]:
         """Открыть выдачу один раз и добирать её нажатиями «Показать ещё»."""
         all_items: list[CardToPars] = []
@@ -153,6 +208,7 @@ class MegamarketScrollPage(MegamarketParsePage):
         self._seen_item_keys.clear()
         self._new_item_counts.clear()
         self.interrupted = False
+        self.left_listing = False
 
         if self.number_clicks is not None and self.number_clicks < 0:
             return all_items
