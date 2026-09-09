@@ -66,25 +66,13 @@ export function JoinView({ notify }: { notify: Notify }) {
     <>
       <div className="page-heading">
         <div>
-          <span className="eyebrow">Центр обработки</span>
           <h1>Объединить отчёты</h1>
-          <p>Сложите несколько Excel-файлов в один общий.</p>
         </div>
       </div>
 
       <section className="join-grid">
         <article className="operation-card">
-          <div className="operation-card__number">03</div>
-          <div className="operation-card__icon operation-card__icon--light">
-            <MergeIcon />
-          </div>
-          <span className="eyebrow">Join reports</span>
           <h2>Выбрать файлы</h2>
-          <p>
-            Колонки сопоставляются по названию, поэтому в одно объединение
-            попадают и отчёты, снятые до появления новой колонки. Строки на
-            повторы не проверяются — так быстрее.
-          </p>
 
           <form onSubmit={join} className="operation-form">
             <input
