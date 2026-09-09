@@ -19,7 +19,7 @@ async def parse(
         service: ParserServiceDep,
 ) -> FileResponse:
     try:
-        result = await service.parse(request.command)
+        result = await service.parse(request.commands)
     except InvalidParseCommand as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
     except ParserBrowserUnavailable as error:
@@ -41,5 +41,8 @@ async def parse(
         headers={
             "X-Cards-Collected": str(result.cards_count),
             "X-Sellers-Added": str(result.sellers_added),
+            # Сами запросы в заголовок не кладём: они бывают кириллическими, а
+            # заголовки ходят в latin-1.
+            "X-Queries-Parsed": str(len(result.queries)),
         },
     )

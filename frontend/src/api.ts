@@ -77,11 +77,15 @@ async function downloadResponse(response: Response, fallback: string) {
   URL.revokeObjectURL(url);
 }
 
-export async function runScrolling(query: string): Promise<number> {
+// Все запросы уходят одним вызовом: сервер обходит их подряд в одной вкладке
+// и отдаёт единственный файл со всей собранной выдачей.
+export async function runScrolling(queries: string[]): Promise<number> {
   const response = await fetch(`${baseUrl}/parse`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ command: `scrolling||${query}` }),
+    body: JSON.stringify({
+      commands: queries.map((query) => `scrolling||${query}`),
+    }),
   });
   if (!response.ok) throw await errorFromResponse(response);
   const count = Number(response.headers.get("X-Cards-Collected") ?? 0);

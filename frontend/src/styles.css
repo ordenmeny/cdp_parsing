@@ -204,6 +204,16 @@ input[type="checkbox"] { width: 15px; height: 15px; accent-color: #252c28; }
 .command-input input { height: 100%; color: #fff; background: transparent; border: 0; box-shadow: none; }
 .command-input input:focus { border: 0; box-shadow: none; }
 .command-input input::placeholder { color: #626b66; }
+.query-list { display: grid; gap: 9px; }
+.query-row { display: flex; align-items: center; gap: 8px; }
+.query-row .command-input { flex: 1; min-width: 0; }
+/* Двойной класс, а не одиночный: иначе светлый `:hover` базового варианта
+   перебивает тёмный по специфичности. */
+.icon-button.icon-button--on-dark { color: #98a19c; background: #242a27; border-color: #343c38; }
+.icon-button.icon-button--on-dark:hover:not(:disabled) { color: #fff; background: #2f3733; }
+.button.button--on-dark { color: #cfd4d0; background: rgba(255,255,255,.05); border-color: #343c38; }
+.button.button--on-dark:hover:not(:disabled) { color: #fff; background: rgba(255,255,255,.1); box-shadow: none; }
+.button.button--on-dark:disabled { color: #6b736e; }
 .operation-progress { display: flex; align-items: center; gap: 10px; margin-top: 18px; color: #929b96; font-size: 10px; }
 .operation-progress__line { position: relative; width: 52px; height: 2px; overflow: hidden; background: #343a37; border-radius: 4px; }
 .operation-progress__line::after { position: absolute; inset: 0; content: ""; background: var(--lime); animation: progress 1.4s ease-in-out infinite; transform-origin: left; }

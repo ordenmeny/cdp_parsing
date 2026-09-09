@@ -81,8 +81,12 @@ class MainTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(browser.pages), 1)
         browser.pages[0].cdp.Page.close.assert_awaited_once_with()
         all_stock_parser.parse.assert_awaited_once_with("товар")
+        # Запрос проставляется каждой карточке: в отчёте под него есть колонка.
         report_class.assert_called_once_with(
-            [first, second],
+            [
+                first.model_copy(update={"query": "товар"}),
+                second.model_copy(update={"query": "товар"}),
+            ],
             model=CardToPars,
             query="товар",
         )

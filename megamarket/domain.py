@@ -28,6 +28,10 @@ class CardToPars(BaseModel):
     image_link: str = Field(default="", title="Ссылка на изображение")
     stock: Stock = Field(default=Stock.OUT_OF_STOCK, title="Наличие")
     seller_link: str = Field(default="", title="Ссылка на продавца")
+    # Один отчёт может собираться по нескольким запросам сразу, и тогда только
+    # эта колонка говорит, откуда взялась строка. Поле необязательное: в старых
+    # отчётах колонки нет, и читать их это не мешает.
+    query: str = Field(default="", title="Запрос")
 
 
 class SellerInfo(BaseModel):

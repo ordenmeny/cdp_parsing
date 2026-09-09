@@ -92,7 +92,7 @@ async def main() -> None:
                     pass
 
         report = ExcelReport(
-            in_stock_cards,
+            [card.model_copy(update={"query": query}) for card in in_stock_cards],
             model=CardToPars,
             query=query,
         )

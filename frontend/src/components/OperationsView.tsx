@@ -1,24 +1,61 @@
 import { useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import { defineSellers, runScrolling } from "../api";
-import { FileIcon, PlayIcon, UploadIcon } from "./Icons";
+import { CloseIcon, FileIcon, PlayIcon, PlusIcon, UploadIcon } from "./Icons";
 
 type Notify = (message: string, kind?: "success" | "error") => void;
 
+// Столько же принимает `/parse`: предупредить о пределе лучше здесь, чем
+// показывать пользователю отказ сервера.
+const MAX_QUERIES = 20;
+
+type QueryField = { id: number; value: string };
+
 export function OperationsView({ notify }: { notify: Notify }) {
-  const [query, setQuery] = useState("");
+  const [queries, setQueries] = useState<QueryField[]>([{ id: 0, value: "" }]);
+  const nextQueryId = useRef(1);
   const [parsing, setParsing] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   const [limit, setLimit] = useState(4);
   const [defining, setDefining] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
 
+  const addQuery = () => {
+    setQueries((current) =>
+      current.length >= MAX_QUERIES
+        ? current
+        : [...current, { id: nextQueryId.current++, value: "" }],
+    );
+  };
+
+  // Последнее поле не убираем: без него собирать было бы нечего.
+  const removeQuery = (id: number) => {
+    setQueries((current) =>
+      current.length > 1 ? current.filter((field) => field.id !== id) : current,
+    );
+  };
+
+  const changeQuery = (id: number, value: string) => {
+    setQueries((current) =>
+      current.map((field) => (field.id === id ? { ...field, value } : field)),
+    );
+  };
+
   const parse = async (event: FormEvent) => {
     event.preventDefault();
-    if (!query.trim()) return;
+    // Пустые поля пользователь мог добавить и передумать — они просто
+    // выпадают из запроса, а не мешают запуску.
+    const values = queries
+      .map((field) => field.value.trim())
+      .filter((value) => value.length > 0);
+    if (!values.length) return;
     setParsing(true);
     try {
-      const count = await runScrolling(query.trim());
-      notify(`Парсинг завершён. Собрано карточек: ${count}`);
+      const count = await runScrolling(values);
+      notify(
+        values.length > 1
+          ? `Парсинг завершён. Запросов: ${values.length}, собрано карточек: ${count}`
+          : `Парсинг завершён. Собрано карточек: ${count}`,
+      );
     } catch (error) {
       notify(error instanceof Error ? error.message : "Парсинг завершился с ошибкой", "error");
     } finally {
@@ -65,22 +102,63 @@ export function OperationsView({ notify }: { notify: Notify }) {
           <div className="operation-card__icon"><PlayIcon /></div>
           <span className="eyebrow">Scrolling parser</span>
           <h2>Собрать товары</h2>
+          <p>
+            Запросы обходятся по очереди, а выдача всех них приходит одним
+            Excel-файлом с колонкой «Запрос».
+          </p>
 
           <form onSubmit={parse} className="operation-form">
-            <label className="field field--on-dark">
-              <span>Поисковый запрос</span>
-              <div className="command-input">
-                <input
-                  required
-                  value={query}
-                  onChange={(event) => setQuery(event.target.value)}
-                  placeholder="например, makita"
-                />
+            <div className="field field--on-dark">
+              <span>
+                {queries.length > 1
+                  ? `Поисковые запросы · ${queries.length}`
+                  : "Поисковый запрос"}
+              </span>
+              <div className="query-list">
+                {queries.map((field, index) => (
+                  <div className="query-row" key={field.id}>
+                    <div className="command-input">
+                      <input
+                        required={index === 0}
+                        value={field.value}
+                        aria-label={`Поисковый запрос ${index + 1}`}
+                        onChange={(event) => changeQuery(field.id, event.target.value)}
+                        placeholder={index === 0 ? "например, makita" : "например, iphone 17"}
+                      />
+                    </div>
+                    {queries.length > 1 ? (
+                      <button
+                        className="icon-button icon-button--on-dark"
+                        type="button"
+                        disabled={parsing}
+                        aria-label={`Убрать запрос ${index + 1}`}
+                        onClick={() => removeQuery(field.id)}
+                      >
+                        <CloseIcon />
+                      </button>
+                    ) : null}
+                  </div>
+                ))}
               </div>
-            </label>
+            </div>
+            <button
+              className="button button--ghost button--small button--on-dark"
+              type="button"
+              disabled={parsing || queries.length >= MAX_QUERIES}
+              onClick={addQuery}
+            >
+              <PlusIcon />
+              {queries.length >= MAX_QUERIES
+                ? `Больше ${MAX_QUERIES} запросов за раз нельзя`
+                : "Добавить запрос"}
+            </button>
             <button className="button button--accent button--wide" type="submit" disabled={parsing}>
               {parsing ? <span className="spinner spinner--dark" /> : <PlayIcon />}
-              {parsing ? "Идёт сбор…" : "Запустить и скачать Excel"}
+              {parsing
+                ? "Идёт сбор…"
+                : queries.length > 1
+                  ? "Запустить и скачать один Excel"
+                  : "Запустить и скачать Excel"}
             </button>
           </form>
           {parsing ? (
