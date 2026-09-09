@@ -37,4 +37,4 @@ export interface DefineSellersResult {
   stopped_reason: string;
 }
 
-export type ViewName = "sellers" | "operations";
+export type ViewName = "sellers" | "operations" | "join";

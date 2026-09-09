@@ -6,6 +6,7 @@ const apiPaths = [
   "/set_sellers",
   "/define_sellers",
   "/parse",
+  "/join",
 ];
 
 export default defineConfig(({ command, mode }) => {

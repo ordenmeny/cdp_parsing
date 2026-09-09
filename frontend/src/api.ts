@@ -126,3 +126,20 @@ export async function defineSelectedSellers(
     body: JSON.stringify({ seller_ids: sellerIds }),
   });
 }
+
+export async function joinReports(
+  files: File[],
+): Promise<{ files: number; rows: number }> {
+  const form = new FormData();
+  for (const file of files) form.append("files", file);
+
+  const response = await fetch(`${baseUrl}/join`, { method: "POST", body: form });
+  if (!response.ok) throw await errorFromResponse(response);
+
+  const joined = {
+    files: Number(response.headers.get("X-Files-Joined") ?? files.length),
+    rows: Number(response.headers.get("X-Rows-Joined") ?? 0),
+  };
+  await downloadResponse(response, "megamarket-joined.xlsx");
+  return joined;
+}

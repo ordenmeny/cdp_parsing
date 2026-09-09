@@ -49,8 +49,11 @@ class ApiBoundaryTests(unittest.TestCase):
         local_files = [
             project / "megamarket/api/app.py",
             project / "megamarket/api/deps.py",
+            project / "megamarket/api/join.py",
+            project / "megamarket/api/parser.py",
             project / "megamarket/api/sellers.py",
             project / "megamarket/clients/remote_api.py",
+            project / "megamarket/services/join.py",
             project / "megamarket/services/local_sellers.py",
             project / "megamarket/services/frontend_sync.py",
         ]

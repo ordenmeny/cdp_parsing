@@ -223,6 +223,14 @@ input[type="checkbox"] { width: 15px; height: 15px; accent-color: #252c28; }
 .file-drop svg { width: 24px; height: 24px; flex: 0 0 24px; }
 .file-drop span, .file-drop strong, .file-drop small { display: block; }
 .file-drop strong { color: #333b36; font-size: 11px; overflow-wrap: anywhere; }
+.join-grid { display: grid; max-width: 640px; }
+.join-list { display: grid; max-height: 320px; gap: 7px; margin: 0; padding: 0; overflow-y: auto; list-style: none; }
+.join-item { display: flex; align-items: center; gap: 11px; padding: 9px 11px; background: #f7f8f5; border: 1px solid #e6e9e2; border-radius: 10px; }
+.join-item svg { width: 19px; height: 19px; flex: 0 0 19px; color: #7d8580; }
+.join-item > span { min-width: 0; flex: 1; }
+.join-item strong, .join-item small { display: block; }
+.join-item strong { color: #333b36; font-size: 11px; overflow-wrap: anywhere; }
+.join-item small { color: #8a938d; font-size: 10px; }
 .file-drop small { margin-top: 5px; color: #929a95; font-size: 9px; }
 .toast { position: fixed; right: 26px; bottom: 25px; z-index: 80; display: flex; width: min(380px, calc(100vw - 32px)); align-items: flex-start; gap: 11px; padding: 15px 16px; color: #fff; background: #202622; border-radius: 13px; box-shadow: 0 18px 45px rgba(0,0,0,.24); animation: toast-in .25s ease both; }
 .toast > span { display: grid; width: 23px; height: 23px; flex: 0 0 23px; place-items: center; color: var(--ink); background: var(--lime); border-radius: 50%; font-size: 12px; font-weight: 900; }

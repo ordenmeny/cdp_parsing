@@ -5,6 +5,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
+from megamarket.api.join import router as join_router
 from megamarket.api.parser import router as parser_router
 from megamarket.api.sellers import router as sellers_router
 from megamarket.clients.remote_api import RemoteApiClient
@@ -80,3 +81,4 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Megamarket Local API", lifespan=lifespan)
 app.include_router(sellers_router)
 app.include_router(parser_router)
+app.include_router(join_router)

@@ -84,6 +84,15 @@ export function PlayIcon(props: IconProps) {
   );
 }
 
+export function MergeIcon(props: IconProps) {
+  return (
+    <svg {...base} {...props}>
+      <path d="M4 3v3l8 6 8-6V3" />
+      <path d="M12 12v9M8 17l4 4 4-4" />
+    </svg>
+  );
+}
+
 export function PlusIcon(props: IconProps) {
   return (
     <svg {...base} {...props}>

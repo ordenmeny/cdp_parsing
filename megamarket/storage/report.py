@@ -90,6 +90,93 @@ class ExcelReport:
         return target
 
 
+def report_sheet(workbook):
+    """Лист с карточками: у наших отчётов он назван, у чужих берём первый."""
+    if ExcelReport.SHEET_TITLE in workbook.sheetnames:
+        return workbook[ExcelReport.SHEET_TITLE]
+    return workbook.active
+
+
+def read_headers(path: Path) -> list[str]:
+    workbook = load_workbook(path, read_only=True, data_only=False)
+    try:
+        rows = report_sheet(workbook).iter_rows(values_only=True)
+        return [str(value or "") for value in next(rows, ())]
+    finally:
+        workbook.close()
+
+
+def joined_report_filename() -> str:
+    """Имя файла для объединения, снятого прямо сейчас."""
+    stamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S-%f")
+    return f"all-{ExcelReport._site_name()}-{stamp}.xlsx"
+
+
+def merge_excel_reports(sources: Sequence[Path], target: Path) -> int:
+    """Сложить строки нескольких отчётов в один файл; вернуть число строк.
+
+    Колонки сопоставляются по названию, а не по номеру: в одно объединение
+    попадают и отчёты, снятые до появления новой колонки, — недостающие клетки
+    остаются пустыми. Строки на повторы не проверяются: объединение должно быть
+    быстрым, а что считать дублем, зависит от задачи.
+    """
+    columns: list[str] = []
+    positions: dict[str, int] = {}
+    for path in sources:
+        for header in read_headers(path):
+            if header and header not in positions:
+                positions[header] = len(columns)
+                columns.append(header)
+    if not columns:
+        raise ValueError("В выбранных файлах отсутствуют заголовки таблицы.")
+
+    result = Workbook()
+    sheet = result.active
+    sheet.title = ExcelReport.SHEET_TITLE
+    sheet.append(columns)
+    # Ширины набираем по ходу записи: отдельный проход по готовому листу стоил
+    # бы столько же, сколько само объединение.
+    widths = [len(header) for header in columns]
+    written = 0
+
+    for path in sources:
+        workbook = load_workbook(path, read_only=True, data_only=False)
+        try:
+            rows = report_sheet(workbook).iter_rows(values_only=True)
+            headers = [str(value or "") for value in next(rows, ())]
+            if not any(headers):
+                continue
+            places = [positions.get(header) for header in headers]
+            for values in rows:
+                if not any(value not in (None, "") for value in values):
+                    continue
+                row: list = [None] * len(columns)
+                for place, value in zip(places, values):
+                    if place is None:
+                        continue
+                    row[place] = value
+                    widths[place] = max(widths[place], len(str(value or "")))
+                sheet.append(row)
+                written += 1
+        finally:
+            workbook.close()
+
+    for number, width in enumerate(widths, start=1):
+        cell = sheet.cell(row=1, column=number)
+        cell.font = Font(bold=True)
+        sheet.column_dimensions[get_column_letter(number)].width = min(
+            width + 2,
+            ExcelReport.MAX_WIDTH,
+        )
+    sheet.freeze_panes = "A2"
+    last_column = get_column_letter(len(columns))
+    sheet.auto_filter.ref = f"A1:{last_column}{written + 1}"
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    result.save(target)
+    return written
+
+
 def join_excel_reports(directory: str | Path) -> Path:
     """Объединить строки всех отчётов ``.xlsx`` в указанной папке."""
     source_dir = Path(directory).expanduser().resolve()
@@ -114,60 +201,10 @@ def join_excel_reports(directory: str | Path) -> Path:
         else source_dir.name
     )
     output_path = source_dir / f"all-{site}{stamp}-{query}.xlsx"
-    result = Workbook()
-    result_sheet = result.active
-    result_sheet.title = ExcelReport.SHEET_TITLE
-    expected_headers: list[str] | None = None
-    output_row = 1
-
-    for source_path in files:
-        workbook = load_workbook(source_path, read_only=True, data_only=False)
-        try:
-            sheet = (
-                workbook[ExcelReport.SHEET_TITLE]
-                if ExcelReport.SHEET_TITLE in workbook.sheetnames
-                else workbook.active
-            )
-            rows = sheet.iter_rows(values_only=True)
-            headers = [str(value or "") for value in next(rows, ())]
-            if not headers:
-                continue
-            if expected_headers is None:
-                expected_headers = headers
-                result_sheet.append(headers)
-                output_row += 1
-            elif headers != expected_headers:
-                raise ValueError(
-                    f"Структура колонок в файле {source_path.name} отличается."
-                )
-
-            for values in rows:
-                if any(value not in (None, "") for value in values):
-                    result_sheet.append(values)
-                    output_row += 1
-        finally:
-            workbook.close()
-
-    if expected_headers is None:
-        raise ValueError("В найденных файлах отсутствуют заголовки таблицы.")
-
-    for number in range(1, len(expected_headers) + 1):
-        cell = result_sheet.cell(row=1, column=number)
-        cell.font = Font(bold=True)
-        letter = get_column_letter(number)
-        longest = max(len(str(cell.value or "")) for cell in result_sheet[letter])
-        result_sheet.column_dimensions[letter].width = min(
-            longest + 2,
-            ExcelReport.MAX_WIDTH,
-        )
-
-    result_sheet.freeze_panes = "A2"
-    last_column = get_column_letter(len(expected_headers))
-    result_sheet.auto_filter.ref = f"A1:{last_column}{output_row - 1}"
-    result.save(output_path)
+    written = merge_excel_reports(files, output_path)
     print(
         f"Общий отчёт сохранён: {output_path} "
-        f"(файлов: {len(files)}, строк: {output_row - 2})"
+        f"(файлов: {len(files)}, строк: {written})"
     )
     return output_path
 
@@ -190,9 +227,7 @@ class ExcelCardsReport:
         self.cards = self._read_cards()
 
     def _get_cards_sheet(self):
-        if ExcelReport.SHEET_TITLE in self.workbook.sheetnames:
-            return self.workbook[ExcelReport.SHEET_TITLE]
-        return self.workbook.active
+        return report_sheet(self.workbook)
 
     def _read_columns(self) -> dict[str, int]:
         columns: dict[str, int] = {}

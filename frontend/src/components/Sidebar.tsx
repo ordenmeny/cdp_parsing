@@ -1,4 +1,4 @@
-import { ActivityIcon, StoreIcon } from "./Icons";
+import { ActivityIcon, MergeIcon, StoreIcon } from "./Icons";
 import type { ViewName } from "../types";
 
 interface SidebarProps {
@@ -9,6 +9,7 @@ interface SidebarProps {
 const navItems = [
   { id: "sellers" as const, label: "Продавцы", icon: StoreIcon },
   { id: "operations" as const, label: "Обработка", icon: ActivityIcon },
+  { id: "join" as const, label: "Объединить", icon: MergeIcon },
 ];
 
 export function Sidebar({ active, onChange }: SidebarProps) {

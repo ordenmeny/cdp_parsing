@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { JoinView } from "./components/JoinView";
 import { OperationsView } from "./components/OperationsView";
 import { SellersView } from "./components/SellersView";
 import { Sidebar } from "./components/Sidebar";
@@ -34,10 +35,13 @@ export default function App() {
           <div className="mobile-nav">
             <button className={view === "sellers" ? "active" : ""} onClick={() => setView("sellers")}>Продавцы</button>
             <button className={view === "operations" ? "active" : ""} onClick={() => setView("operations")}>Задачи</button>
+            <button className={view === "join" ? "active" : ""} onClick={() => setView("join")}>Объединить</button>
           </div>
         </div>
         <div className="content-wrap">
-          {view === "sellers" ? <SellersView notify={notify} /> : <OperationsView notify={notify} />}
+          {view === "sellers" ? <SellersView notify={notify} /> : null}
+          {view === "operations" ? <OperationsView notify={notify} /> : null}
+          {view === "join" ? <JoinView notify={notify} /> : null}
         </div>
       </main>
 
