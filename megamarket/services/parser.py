@@ -28,6 +28,9 @@ MAX_LABEL_LENGTH = 60
 @dataclass(frozen=True, slots=True)
 class ParseResult:
     queries: tuple[str, ...]
+    # Сколько запросов дошло до конца: прогон могли прервать на середине,
+    # и отчёт тогда неполон, о чём пользователю надо сказать.
+    parsed_queries: int
     cards_count: int
     sellers_added: int
     output_path: Path
@@ -60,6 +63,7 @@ class ParserService:
         browser = await self._connect_browser()
         cards: list[CardToPars] = []
         seen_links: set[str] = set()
+        parsed_queries = 0
         page = None
         parser = None
         try:
@@ -73,13 +77,22 @@ class ParserService:
                     cdp_metrics=metrics,
                 )
                 for query in queries:
-                    for card in await parser.parse(query):
+                    try:
+                        found = await parser.parse(query)
+                    except Exception as error:  # noqa: BLE001
+                        # Собранное по прошлым запросам должно попасть в файл:
+                        # ради него запуск и делали, терять его из-за сбоя на
+                        # следующем запросе нельзя.
+                        print(f"Запрос «{query}» прерван: {error}")
+                        break
+                    for card in found:
                         # Один товар попадает в выдачу нескольких запросов, а
                         # в общем файле ему место одно.
                         if card.card_link in seen_links:
                             continue
                         seen_links.add(card.card_link)
                         cards.append(card.model_copy(update={"query": query}))
+                    parsed_queries += 1
                     if parser.interrupted:
                         # Вкладку закрыли или связь оборвалась: следующему
                         # запросу открывать выдачу уже негде.
@@ -112,6 +125,7 @@ class ParserService:
         ).save()
         return ParseResult(
             queries=tuple(queries),
+            parsed_queries=parsed_queries,
             cards_count=len(cards),
             sellers_added=imported.added,
             output_path=output_path,

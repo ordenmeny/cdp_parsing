@@ -57,6 +57,9 @@ class MegamarketScrollPage(MegamarketParsePage):
         # Промах мимо кнопки уводит на карточку товара; сбор после этого
         # продолжать негде, но собранное отдать надо.
         self.left_listing = False
+        # После проверки на робота страница перезагружается и законно
+        # повторяет уже собранное — кольцом выдачи это считать нельзя.
+        self.captcha_recovered = False
 
     async def _find_more_button(self) -> Element | None:
         """Найти кнопку догрузки; её отсутствие означает конец выдачи."""
@@ -168,11 +171,20 @@ class MegamarketScrollPage(MegamarketParsePage):
         if await self._wait_cards_grew(before):
             return True
 
-        # Прироста нет — отличаем штатный конец выдачи от блокировки.
+        # Прироста нет — отличаем штатный конец выдачи от проверки на робота.
         probe = await self._probe_page()
         if BLOCKED_HEADING in probe.heading.casefold():
-            print(f"{BLOCKED_MESSAGE} Останавливаемся.")
-            return False
+            # Проверку решает человек в том же окне; wait_page_state этого и
+            # ждёт, а вернувшаяся выдача означает, что сбор можно продолжать.
+            try:
+                state = await self.wait_page_state()
+            except TimeoutError:
+                state = PageState.BLOCKED
+            if state is not PageState.READY:
+                print(f"{BLOCKED_MESSAGE} Останавливаемся.")
+                return False
+            self.captcha_recovered = True
+            return True
         if await self._find_more_button() is None:
             print("Кнопка исчезла после нажатия — выдача закончилась.")
             return False
@@ -209,6 +221,7 @@ class MegamarketScrollPage(MegamarketParsePage):
         self._new_item_counts.clear()
         self.interrupted = False
         self.left_listing = False
+        self.captcha_recovered = False
 
         if self.number_clicks is not None and self.number_clicks < 0:
             return all_items
@@ -257,9 +270,14 @@ class MegamarketScrollPage(MegamarketParsePage):
                 f"Всего собрано: {len(all_items)}."
             )
 
+            if self.captcha_recovered:
+                # Страница вернулась после проверки и показывает уже собранное:
+                # это не кольцо выдачи, а тот же список с начала.
+                self.captcha_recovered = False
+                repeated_loads = 0
             # Признак кольца тот же, что и при обходе страниц: прирост
             # заметно меньше обычного для этого прогона.
-            if self._is_repeat_page(items, new_items):
+            elif self._is_repeat_page(items, new_items):
                 repeated_loads += 1
                 print(
                     "Догрузка не принесла новых элементов "

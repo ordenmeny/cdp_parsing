@@ -1,8 +1,12 @@
 import unittest
 from unittest.mock import AsyncMock, MagicMock
 
-from megamarket.cdp.extractors import ClickPoint
-from megamarket.parsers.parsing import is_product_page_url
+from parsek_cdp import ProtocolError
+
+from megamarket.cdp.extractors import ClickPoint, PageProbe
+from megamarket.domain import CardToPars
+from megamarket.parsers.base_parser import PageState
+from megamarket.parsers.parsing import BLOCKED_HEADING, is_product_page_url
 from megamarket.parsers.scrolling import MegamarketScrollPage
 
 
@@ -27,9 +31,22 @@ def make_parser():
 
 
 def make_element(*points: dict):
+    """Элемент, чьё прицеливание отвечает заданными точками по очереди."""
     element = MagicMock()
-    element.apply = AsyncMock(side_effect=list(points))
+    element.backend_id = 42
+    element._points = list(points)
     return element
+
+
+def aiming(parser, element):
+    """Подменить обмен с браузером ответами, заданными в элементе."""
+
+    async def _aim(target):
+        assert target is element
+        return ClickPoint.from_raw(element._points.pop(0))
+
+    parser._aim_at = AsyncMock(side_effect=_aim)
+    return parser._aim_at
 
 
 def probe(href: str, cards: int = 96):
@@ -65,6 +82,7 @@ class ClickElementTests(unittest.IsolatedAsyncioTestCase):
     async def test_click_lands_on_the_verified_point(self):
         parser = make_parser()
         element = make_element({"x": 761.0, "y": 360.0, "ok": True, "hit": "button"})
+        aiming(parser, element)
 
         self.assertTrue(await parser._click_element(element, "кнопку"))
 
@@ -83,6 +101,7 @@ class ClickElementTests(unittest.IsolatedAsyncioTestCase):
             {"x": 761.0, "y": 360.0, "ok": False, "hit": "a.catalog-item-image-block"},
             {"x": 761.0, "y": 402.0, "ok": True, "hit": "button"},
         )
+        aiming(parser, element)
 
         self.assertTrue(await parser._click_element(element, "кнопку"))
 
@@ -96,11 +115,53 @@ class ClickElementTests(unittest.IsolatedAsyncioTestCase):
         parser = make_parser()
         miss = {"x": 1.0, "y": 2.0, "ok": False, "hit": "a.catalog-item-image-block"}
         element = make_element(*[miss] * parser.CLICK_ATTEMPTS)
+        aim = aiming(parser, element)
 
         self.assertFalse(await parser._click_element(element, "кнопку"))
 
         parser.page.cdp.Input.dispatch_mouse_event.assert_not_awaited()
-        self.assertEqual(element.apply.await_count, parser.CLICK_ATTEMPTS)
+        self.assertEqual(aim.await_count, parser.CLICK_ATTEMPTS)
+
+
+class AimAtTests(unittest.IsolatedAsyncioTestCase):
+    @staticmethod
+    def _parser(resolve, call=None):
+        parser = make_parser()
+        parser.page.domain_enabled = MagicMock(return_value=_enabled())
+        parser.page.cdp.DOM.resolve_node = resolve
+        parser.page.cdp.Runtime.call_function_on = call or AsyncMock()
+        return parser
+
+    async def test_node_is_resolved_with_the_dom_domain_enabled(self):
+        # backendNodeId переживает выключение домена, а nodeId — нет: на этом
+        # прицеливание и спотыкалось.
+        resolve = AsyncMock(
+            return_value=MagicMock(object=MagicMock(object_id="obj-1"))
+        )
+        call = AsyncMock(
+            return_value=MagicMock(
+                result=MagicMock(value={"x": 5.0, "y": 6.0, "ok": True, "hit": "button"})
+            )
+        )
+        parser = self._parser(resolve, call)
+        element = MagicMock(backend_id=42)
+
+        point = await parser._aim_at(element)
+
+        self.assertTrue(point.ok)
+        self.assertEqual((point.x, point.y), (5.0, 6.0))
+        parser.page.domain_enabled.assert_called_once_with(parser.page.cdp.DOM)
+        resolve.assert_awaited_once_with(backend_node_id=42)
+
+    async def test_stale_node_is_reported_instead_of_breaking_the_run(self):
+        parser = self._parser(
+            AsyncMock(side_effect=ProtocolError(-32000, "No node with given id found"))
+        )
+
+        point = await parser._aim_at(MagicMock(backend_id=42))
+
+        self.assertFalse(point.ok)
+        parser.page.cdp.Runtime.call_function_on.assert_not_awaited()
 
 
 class ScrollSettleTests(unittest.IsolatedAsyncioTestCase):
@@ -167,6 +228,104 @@ class LoadMoreTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(await parser._load_more(0))
         parser._wait_cards_grew.assert_not_awaited()
+
+
+class _enabled:
+    """Заглушка ``page.domain_enabled`` — обычный асинхронный контекст."""
+
+    async def __aenter__(self):
+        return None
+
+    async def __aexit__(self, *_):
+        return False
+
+
+class CaptchaTests(unittest.IsolatedAsyncioTestCase):
+    @staticmethod
+    def _probes(*probes):
+        return AsyncMock(side_effect=list(probes))
+
+    @staticmethod
+    def _blocked(cards: int = 0):
+        return PageProbe(cards=cards, heading=f"  {BLOCKED_HEADING.title()}  ")
+
+    async def test_page_waits_until_the_check_is_solved_by_hand(self):
+        parser = make_parser()
+        parser.cards_poll_interval = 0
+        # Заглушка держится две проверки, затем человек решает капчу.
+        parser._probe_page = self._probes(
+            self._blocked(),
+            self._blocked(),
+            PageProbe(cards=48),
+        )
+        parser.wait_content_ready = AsyncMock()
+
+        self.assertIs(await parser.wait_page_state(), PageState.READY)
+        self.assertEqual(parser._probe_page.await_count, 3)
+
+    async def test_unsolved_check_gives_up_after_the_timeout(self):
+        parser = make_parser()
+        parser.cards_poll_interval = 0
+        parser.captcha_timeout = 0
+        parser._probe_page = AsyncMock(return_value=self._blocked())
+
+        self.assertIs(await parser.wait_page_state(), PageState.BLOCKED)
+
+    async def test_solved_check_lets_the_run_continue(self):
+        parser = make_parser()
+        parser._find_more_button = AsyncMock(return_value=MagicMock())
+        parser._sleep_before_more = AsyncMock()
+        parser._scroll_down = AsyncMock()
+        parser._click_element = AsyncMock(return_value=True)
+        parser._left_the_listing = AsyncMock(return_value=False)
+        parser._wait_cards_grew = AsyncMock(return_value=False)
+        parser._probe_page = self._probes(PageProbe(cards=96), self._blocked())
+        parser.wait_page_state = AsyncMock(return_value=PageState.READY)
+
+        self.assertTrue(await parser._load_more(0))
+        self.assertTrue(parser.captcha_recovered)
+
+    @staticmethod
+    def _run_with_reloaded_page(parser, recover: bool):
+        """Прогон, где вторая итерация видит ту же страницу, что и первая."""
+        card = CardToPars(
+            title="Дрель",
+            price="100 ₽",
+            seller="Кувалда",
+            card_link="https://megamarket.ru/catalog/details/a_1/",
+        )
+        parser.repeat_pages_limit = 1
+        parser._open_search = AsyncMock(return_value=PageState.READY)
+        parser.prepare_first_page = AsyncMock(return_value=PageState.READY)
+        parser._parse_current_page_measured = AsyncMock(
+            side_effect=[[card], [card], [card]]
+        )
+
+        async def load_more(clicks: int) -> bool:
+            if clicks == 0:
+                parser.captcha_recovered = recover
+                return True
+            return False
+
+        parser._load_more = AsyncMock(side_effect=load_more)
+        return parser
+
+    async def test_page_returned_after_the_check_is_not_a_ring(self):
+        parser = self._run_with_reloaded_page(make_parser(), recover=True)
+
+        await parser.parse("makita")
+
+        # Дошли до второй догрузки: повтор после проверки кольцом не сочли.
+        self.assertEqual(parser._load_more.await_count, 2)
+        self.assertFalse(parser.captcha_recovered)
+
+    async def test_same_page_without_a_check_still_stops_the_ring(self):
+        parser = self._run_with_reloaded_page(make_parser(), recover=False)
+
+        await parser.parse("makita")
+
+        # Без проверки повтор остаётся признаком кольца — сбор прекращается.
+        self.assertEqual(parser._load_more.await_count, 1)
 
 
 if __name__ == "__main__":

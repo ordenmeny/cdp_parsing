@@ -268,6 +268,42 @@ class ParserServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.queries, ("makita", "iphone 17", "samsung s24"))
         self.assertEqual(result.cards_count, 3)
 
+    async def test_broken_second_query_keeps_the_first_one(self):
+        collected = self._card("Шуруповёрт", 1)
+        page = self._page()
+        scrolling_parser = MagicMock()
+        scrolling_parser.interrupted = False
+
+        async def parse_then_break(query: str):
+            if query == "makita":
+                return [collected]
+            raise RuntimeError("вкладка отвалилась")
+
+        scrolling_parser.parse = AsyncMock(side_effect=parse_then_break)
+        report = MagicMock()
+        report.save.return_value = Path("output/result.xlsx")
+
+        connect, page_class, report_class, target = self._running(
+            self._browser(page),
+            scrolling_parser,
+            report,
+        )
+        with connect, page_class, report_class as report_factory, target:
+            result = await ParserService(self._remote()).parse([
+                "scrolling||makita",
+                "scrolling||iphone 17",
+            ])
+
+        # Сбой на втором запросе не должен уносить с собой первый.
+        self.assertEqual(
+            [row.query for row in report_factory.call_args.args[0]],
+            ["makita"],
+        )
+        report.save.assert_called_once_with()
+        self.assertEqual(result.cards_count, 1)
+        self.assertEqual(result.parsed_queries, 1)
+        self.assertEqual(len(result.queries), 2)
+
     async def test_card_found_by_two_queries_is_written_once(self):
         shared = self._card("Шуруповёрт", 1)
         page = self._page()

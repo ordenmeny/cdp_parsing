@@ -79,7 +79,9 @@ async function downloadResponse(response: Response, fallback: string) {
 
 // Все запросы уходят одним вызовом: сервер обходит их подряд в одной вкладке
 // и отдаёт единственный файл со всей собранной выдачей.
-export async function runScrolling(queries: string[]): Promise<number> {
+export async function runScrolling(
+  queries: string[],
+): Promise<{ cards: number; parsed: number; total: number }> {
   const response = await fetch(`${baseUrl}/parse`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -88,9 +90,13 @@ export async function runScrolling(queries: string[]): Promise<number> {
     }),
   });
   if (!response.ok) throw await errorFromResponse(response);
-  const count = Number(response.headers.get("X-Cards-Collected") ?? 0);
+  const result = {
+    cards: Number(response.headers.get("X-Cards-Collected") ?? 0),
+    parsed: Number(response.headers.get("X-Queries-Parsed") ?? queries.length),
+    total: Number(response.headers.get("X-Queries-Total") ?? queries.length),
+  };
   await downloadResponse(response, "megamarket-result.xlsx");
-  return count;
+  return result;
 }
 
 export async function defineSellers(

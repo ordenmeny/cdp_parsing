@@ -14,6 +14,15 @@ class SlugifyCardTests(unittest.TestCase):
             "yuniks-fitnes-dbs",
         )
 
+    def test_apostrophe_splits_words_instead_of_gluing_them(self):
+        self.assertEqual(SlugifyCard._slugify("О'КЕЙ - Купер"), "o-key-kuper")
+        self.assertEqual(SlugifyCard._slugify("О'КЕЙ"), "o-key")
+
+    def test_apostrophe_is_recognised_in_any_shape(self):
+        # В данных встречаются и типографский апостроф, и гравис вместо него.
+        for name in ("О’КЕЙ - Купер", "О‘КЕЙ - Купер", "О`КЕЙ - Купер"):
+            self.assertEqual(SlugifyCard._slugify(name), "o-key-kuper", name)
+
     def test_uses_megamarket_cyrillic_transliteration(self):
         self.assertEqual(SlugifyCard._slugify("Перекрёсток"), "perekrestok")
         self.assertEqual(SlugifyCard._slugify("ХОБОТ"), "hobot")

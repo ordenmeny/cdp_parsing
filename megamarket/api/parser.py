@@ -42,7 +42,9 @@ async def parse(
             "X-Cards-Collected": str(result.cards_count),
             "X-Sellers-Added": str(result.sellers_added),
             # Сами запросы в заголовок не кладём: они бывают кириллическими, а
-            # заголовки ходят в latin-1.
-            "X-Queries-Parsed": str(len(result.queries)),
+            # заголовки ходят в latin-1. Пары чисел хватает, чтобы показать,
+            # что прогон оборвался на середине списка.
+            "X-Queries-Parsed": str(result.parsed_queries),
+            "X-Queries-Total": str(len(result.queries)),
         },
     )

@@ -300,7 +300,7 @@ class MegamarketParsePage(BasePaginatedParser[CardToPars]):
         попадания делаются одним вызовом, и до нажатия остаётся один обмен.
         """
         for _ in range(self.CLICK_ATTEMPTS):
-            point = ClickPoint.from_raw(await element.apply(CLICK_POINT_SCRIPT))
+            point = await self._aim_at(element)
             if not point.ok:
                 print(
                     f"В точке клика по {name} оказалось другое: "
@@ -334,6 +334,35 @@ class MegamarketParsePage(BasePaginatedParser[CardToPars]):
         print(f"Не удалось прицелиться в {name} за {self.CLICK_ATTEMPTS} попытки.")
         return False
 
+    async def _aim_at(self, element: Element) -> ClickPoint:
+        """Прокрутить к элементу и вернуть проверенную точку клика.
+
+        Узел живёт в домене DOM, а он по умолчанию выключен: включаем на время
+        и берём объект по ``backendNodeId`` — в отличие от ``nodeId`` он
+        переживает выключение домена, а ``Element.apply`` про это не знает.
+        """
+        # Узел мог устареть между поиском и прицеливанием: это повод
+        # прицелиться заново, а не обрывать весь сбор.
+        try:
+            async with self.page.domain_enabled(self.page.cdp.DOM):
+                resolved = await self.page.cdp.DOM.resolve_node(
+                    backend_node_id=element.backend_id,
+                )
+            object_id = resolved.object.object_id
+            if object_id is None:
+                return ClickPoint()
+            answer = await self.page.cdp.Runtime.call_function_on(
+                function_declaration=CLICK_POINT_SCRIPT,
+                object_id=object_id,
+                return_by_value=True,
+            )
+        except ProtocolError as error:
+            print(f"Узел для клика недоступен: {error}")
+            return ClickPoint()
+        return ClickPoint.from_raw(
+            answer.result.value if answer.result else None
+        )
+
     async def _probe_page(self) -> PageProbe:
         raw_probe = await self.page.evaluate(self._page_probe_script)
         self._last_probe = PageProbe.from_raw(raw_probe)
@@ -348,6 +377,8 @@ class MegamarketParsePage(BasePaginatedParser[CardToPars]):
         loop = asyncio.get_running_loop()
         deadline = loop.time() + self.captcha_timeout
 
+        announced = False
+
         while True:
             try:
                 probe = await self._probe_page()
@@ -356,13 +387,27 @@ class MegamarketParsePage(BasePaginatedParser[CardToPars]):
                     raise TimeoutError
                 await asyncio.sleep(self.cards_poll_interval)
                 continue
-            if BLOCKED_HEADING in probe.heading.casefold():
-                return PageState.BLOCKED
+
+            blocked = BLOCKED_HEADING in probe.heading.casefold()
+            if blocked and not announced:
+                # Уйти с заглушки может только человек, поэтому не сдаёмся
+                # сразу, а ждём: проверку решают в том же окне Chrome.
+                print(
+                    f"{BLOCKED_MESSAGE} Решите проверку в окне Chrome — "
+                    f"жду до {self.captcha_timeout:g} сек."
+                )
+                announced = True
+
             if probe.not_found:
                 return PageState.NOT_FOUND
             if probe.cards > 0:
+                if announced:
+                    print("Проверка пройдена, выдача вернулась. Продолжаем.")
                 return PageState.READY
             if loop.time() >= deadline:
+                if blocked or announced:
+                    print("Проверку не прошли за отведённое время.")
+                    return PageState.BLOCKED
                 raise TimeoutError
             await asyncio.sleep(self.cards_poll_interval)
 

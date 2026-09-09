@@ -47,6 +47,11 @@ _CYRILLIC_TO_LATIN = str.maketrans(
 )
 
 
+# В названиях магазинов апостроф приходит в любом начертании: прямой,
+# типографский, модификатор и даже гравис вместо него.
+_APOSTROPHES = re.compile(r"['’‘`´ʼʹ′]+")
+
+
 class SlugifyCard:
     def __init__(self, cards: list[CardToPars]):
         self.cards = cards
@@ -70,7 +75,12 @@ class SlugifyCard:
             raise TypeError("value must be a string")
 
         transliterated = value.lower().translate(_CYRILLIC_TO_LATIN)
-        normalized = unicodedata.normalize("NFKD", transliterated)
+        # Апостроф — исключение из правила ниже: Megamarket считает его
+        # разделителем, а не украшением. ``О'КЕЙ - Купер`` открывается как
+        # ``/shop/o-key-kuper/``. Замену делаем до перевода в ASCII: типографский
+        # апостроф там просто выпал бы, и слова склеились.
+        separated = _APOSTROPHES.sub(" ", transliterated)
+        normalized = unicodedata.normalize("NFKD", separated)
         ascii_value = normalized.encode("ascii", "ignore").decode("ascii")
         # Пунктуация внутри названия магазина не является разделителем в
         # слагах Megamarket: ``Кувалда.ру`` превращается в ``kuvaldaru``.

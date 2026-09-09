@@ -50,12 +50,21 @@ export function OperationsView({ notify }: { notify: Notify }) {
     if (!values.length) return;
     setParsing(true);
     try {
-      const count = await runScrolling(values);
-      notify(
-        values.length > 1
-          ? `Парсинг завершён. Запросов: ${values.length}, собрано карточек: ${count}`
-          : `Парсинг завершён. Собрано карточек: ${count}`,
-      );
+      const { cards, parsed, total } = await runScrolling(values);
+      if (parsed < total) {
+        // Файл всё равно скачался — в нём то, что успели собрать.
+        notify(
+          `Прогон прервался: обработано запросов ${parsed} из ${total}. ` +
+            `Собранное сохранено, карточек: ${cards}`,
+          "error",
+        );
+      } else {
+        notify(
+          total > 1
+            ? `Парсинг завершён. Запросов: ${total}, собрано карточек: ${cards}`
+            : `Парсинг завершён. Собрано карточек: ${cards}`,
+        );
+      }
     } catch (error) {
       notify(error instanceof Error ? error.message : "Парсинг завершился с ошибкой", "error");
     } finally {
