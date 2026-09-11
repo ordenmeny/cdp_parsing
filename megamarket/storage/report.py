@@ -14,18 +14,6 @@ from megamarket.config import settings
 from megamarket.domain import CardToPars
 
 
-# Колонки переименовывались, а проверка продавцов читает отчёты по названиям.
-# Старые файлы должны открываться по-прежнему, поэтому прежние заголовки
-# остаются понятными.
-LEGACY_TITLES = {
-    "Название": "title",
-    "Цена": "price",
-    "Ссылка на карточку": "card_link",
-    "Ссылка на изображение": "image_link",
-    "ID товара": "product_id",
-}
-
-
 class ExcelReport:
     SHEET_TITLE = "Карточки"
     MAX_WIDTH = 90
@@ -273,16 +261,6 @@ class ExcelCardsReport:
         self._columns[title] = column
         return column
 
-    def _column_for(self, name: str) -> int | None:
-        """Номер колонки поля — по текущему заголовку или по прежнему."""
-        column = self._columns.get(self._field_title(name))
-        if column is not None:
-            return column
-        for legacy, field_name in LEGACY_TITLES.items():
-            if field_name == name and legacy in self._columns:
-                return self._columns[legacy]
-        return None
-
     def _required_columns(self) -> dict[str, int]:
         """Найти доступные колонки и проверить обязательные поля модели.
 
@@ -295,10 +273,11 @@ class ExcelCardsReport:
         for name, field in CardToPars.model_fields.items():
             if name == "seller_link":
                 continue
-            column = self._column_for(name)
+            title = self._field_title(name)
+            column = self._columns.get(title)
             if column is None:
                 if field.is_required():
-                    missing.append(self._field_title(name))
+                    missing.append(title)
             else:
                 result[name] = column
         if missing:

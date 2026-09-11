@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
-from openpyxl import Workbook, load_workbook
+from openpyxl import load_workbook
 
 from megamarket.domain import (
     CardToPars,
@@ -210,26 +210,6 @@ class ReportColumnsTests(unittest.TestCase):
             cell = sheet.cell(row=2, column=column_of(sheet, "ID карточки"))
             self.assertEqual(cell.data_type, "s")
             self.assertEqual(cell.value, str(card.product_id))
-
-    def test_report_with_old_column_names_is_still_readable(self):
-        # Файлы, снятые до переименования колонок, открывает проверка продавцов.
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "old.xlsx"
-            workbook = Workbook()
-            sheet = workbook.active
-            sheet.title = ExcelReport.SHEET_TITLE
-            sheet.append(["Название", "Цена", "Продавец", "Ссылка на карточку"])
-            sheet.append(["Смартфон", "95 450 ₽", "СОТОМАРКЕТ", LINK])
-            workbook.save(path)
-
-            cards = ExcelCardsReport(path).cards
-
-            self.assertEqual(len(cards), 1)
-            self.assertEqual(cards[0].title, "Смартфон")
-            self.assertEqual(cards[0].card_link, LINK)
-            # Идентификаторы досчитываются из ссылки, даже если колонок не было.
-            self.assertEqual(cards[0].product_id, product_id_from_link(LINK))
-            self.assertEqual(cards[0].seller_id, "261094")
 
 
 if __name__ == "__main__":
