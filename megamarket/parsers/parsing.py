@@ -73,6 +73,8 @@ class MegamarketParsePage(BasePaginatedParser[CardToPars]):
     )
     TITLE_SELECTOR = '[data-test="product-name-link"]'
     PRICE_SELECTOR = '[data-test="product-price"]'
+    # Рейтинг лежит текстом рядом со звёздами; у новых товаров его нет вовсе.
+    RATING_SELECTOR = ".pui-rating-display__rating"
     SELLER_SELECTOR = '[data-test="merchant-name"]'
     IMAGE_SELECTOR = 'meta[itemprop="image"][content]'
     NOT_FOUND_SELECTOR = ".listing-not-found-block"
@@ -149,6 +151,7 @@ class MegamarketParsePage(BasePaginatedParser[CardToPars]):
             card_selector=self.CARD_SELECTOR,
             title_selector=self.TITLE_SELECTOR,
             price_selector=self.PRICE_SELECTOR,
+            rating_selector=self.RATING_SELECTOR,
             seller_selector=self.SELLER_SELECTOR,
             image_selector=self.IMAGE_SELECTOR,
         )
@@ -279,6 +282,7 @@ class MegamarketParsePage(BasePaginatedParser[CardToPars]):
                 CardToPars(
                     title=item.title,
                     price=item.price,
+                    rating=item.rating,
                     seller=item.seller,
                     card_link=card_link,
                     image_link=item.image,

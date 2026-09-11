@@ -7,6 +7,7 @@ from megamarket.domain import CardToPars, SellerInfo, SellerStatus
 from megamarket.repositories.sellers import SellerRepository
 from megamarket.schemas.sellers import (
     SellerImport,
+    SellerResponse,
     SellersImportResponse,
     SellerUpdate,
 )
@@ -154,11 +155,12 @@ class ParserServiceTests(unittest.IsolatedAsyncioTestCase):
         return page
 
     @staticmethod
-    def _remote(added: int = 1):
+    def _remote(added: int = 1, sellers=()):
         remote = MagicMock()
         remote.import_sellers = AsyncMock(
             return_value=SellersImportResponse(added=added)
         )
+        remote.get_sellers = AsyncMock(return_value=list(sellers))
         return remote
 
     @staticmethod
@@ -219,6 +221,98 @@ class ParserServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.cards_count, 1)
         self.assertEqual(result.sellers_added, 1)
         self.assertEqual(result.output_path, Path("output/result.xlsx"))
+
+    @staticmethod
+    def _seller(status=SellerStatus.CORRECT):
+        return SellerResponse(
+            seller_id="147929",
+            name="Продавец 1",
+            link_to_seller="https://megamarket.ru/shop/prodavec/",
+            link_to_card="https://megamarket.ru/catalog/details/x_147929/",
+            status=status,
+            email="shop@example.com",
+            ogrn="1234567890123",
+            official_name="ООО «Продавец»",
+            inn="1234567890",
+            phone="+7 900 000-00-00",
+            rating=4.8,
+        )
+
+    async def test_seller_details_come_from_the_database(self):
+        card = self._card("Товар", 1)
+        page = self._page()
+        scrolling_parser = MagicMock()
+        scrolling_parser.parse = AsyncMock(return_value=[card])
+        scrolling_parser.interrupted = False
+        report = MagicMock()
+        report.save.return_value = Path("output/result.xlsx")
+        remote = self._remote(sellers=[self._seller()])
+
+        connect, page_class, report_class, target = self._running(
+            self._browser(page),
+            scrolling_parser,
+            report,
+        )
+        with connect, page_class, report_class as report_factory, target:
+            await ParserService(remote).parse(["scrolling||makita"])
+
+        row = report_factory.call_args.args[0][0]
+        self.assertEqual(row.seller_id, "147929")
+        self.assertEqual(row.official_name, "ООО «Продавец»")
+        self.assertEqual(row.inn, "1234567890")
+        self.assertEqual(row.ogrn, "1234567890123")
+        self.assertEqual(row.seller_phone, "+7 900 000-00-00")
+        self.assertEqual(row.seller_email, "shop@example.com")
+        self.assertEqual(row.seller_link, "https://megamarket.ru/shop/prodavec/")
+        # Эти колонки не заполняет никто.
+        self.assertEqual((row.brand, row.legal_address, row.description), ("", "", ""))
+
+    async def test_unchecked_seller_leaves_the_link_alone(self):
+        card = self._card("Товар", 1)
+        page = self._page()
+        scrolling_parser = MagicMock()
+        scrolling_parser.parse = AsyncMock(return_value=[card])
+        scrolling_parser.interrupted = False
+        report = MagicMock()
+        report.save.return_value = Path("output/result.xlsx")
+        remote = self._remote(sellers=[self._seller(SellerStatus.UNCONFIRMED)])
+
+        connect, page_class, report_class, target = self._running(
+            self._browser(page),
+            scrolling_parser,
+            report,
+        )
+        with connect, page_class, report_class as report_factory, target:
+            await ParserService(remote).parse(["scrolling||makita"])
+
+        row = report_factory.call_args.args[0][0]
+        # Реквизиты подставились, а ссылка — нет: она ещё догадка.
+        self.assertEqual(row.inn, "1234567890")
+        self.assertEqual(row.seller_link, "")
+
+    async def test_report_survives_a_database_that_did_not_answer(self):
+        card = self._card("Товар", 1)
+        page = self._page()
+        scrolling_parser = MagicMock()
+        scrolling_parser.parse = AsyncMock(return_value=[card])
+        scrolling_parser.interrupted = False
+        report = MagicMock()
+        report.save.return_value = Path("output/result.xlsx")
+        remote = self._remote()
+        remote.get_sellers = AsyncMock(side_effect=RuntimeError("нет связи"))
+
+        connect, page_class, report_class, target = self._running(
+            self._browser(page),
+            scrolling_parser,
+            report,
+        )
+        with connect, page_class, report_class as report_factory, target:
+            result = await ParserService(remote).parse(["scrolling||makita"])
+
+        # Файл важнее реквизитов: он всё равно сохраняется.
+        report.save.assert_called_once_with()
+        self.assertEqual(result.cards_count, 1)
+        self.assertEqual(report_factory.call_args.args[0][0].inn, "")
 
     async def test_every_query_lands_in_a_single_report(self):
         found = {

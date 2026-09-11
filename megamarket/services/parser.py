@@ -12,9 +12,9 @@ from megamarket.cdp.cdp_metrics import collect_cdp_metrics
 from megamarket.cdp.parsek_compat import install_parsek_target_race_fix
 from megamarket.clients.remote_api import RemoteApiClient
 from megamarket.config import settings
-from megamarket.domain import CardToPars
+from megamarket.domain import CardToPars, SellerStatus
 from megamarket.parsers.scrolling import MegamarketScrollPage
-from megamarket.schemas.sellers import SellerImport
+from megamarket.schemas.sellers import SellerImport, SellerResponse
 from megamarket.storage.report import ExcelReport
 from megamarket.utils import ScrollCommand, parse_input_command
 
@@ -118,6 +118,7 @@ class ParserService:
             SellerImport(name=card.seller, link_to_card=card.card_link)
             for card in cards
         ])
+        cards = await self._with_seller_details(cards)
         output_path = ExcelReport(
             cards,
             model=CardToPars,
@@ -130,6 +131,53 @@ class ParserService:
             sellers_added=imported.added,
             output_path=output_path,
         )
+
+    async def _with_seller_details(
+            self,
+            cards: list[CardToPars],
+    ) -> list[CardToPars]:
+        """Дополнить карточки реквизитами продавцов из базы.
+
+        В выдаче реквизитов нет — они появляются в базе после проверки
+        продавца. У продавцов, которых ещё не проверяли, колонки останутся
+        пустыми, и это нормально: отчёт всё равно отдаётся.
+        """
+        if not cards:
+            return cards
+        try:
+            sellers = await self.remote.get_sellers(None)
+        except Exception as error:  # noqa: BLE001 — реквизиты не стоят прогона
+            print(f"Реквизиты продавцов из базы не получены: {error}")
+            return cards
+
+        known = {seller.seller_id: seller for seller in sellers}
+        print(f"Реквизиты подставлены из базы: продавцов в ней {len(known)}.")
+        return [
+            self._with_seller(card, known.get(card.seller_id))
+            for card in cards
+        ]
+
+    @staticmethod
+    def _with_seller(
+            card: CardToPars,
+            seller: SellerResponse | None,
+    ) -> CardToPars:
+        if seller is None:
+            return card
+        return card.model_copy(update={
+            # Ссылку отдаём только подтверждённую: у остальных она остаётся
+            # догадкой слагификатора, и вести может куда угодно.
+            "seller_link": (
+                seller.link_to_seller
+                if seller.status is SellerStatus.CORRECT
+                else card.seller_link
+            ),
+            "official_name": seller.official_name,
+            "inn": seller.inn,
+            "ogrn": seller.ogrn,
+            "seller_phone": seller.phone,
+            "seller_email": seller.email,
+        })
 
     @staticmethod
     def _read_queries(commands: Sequence[str]) -> list[str]:

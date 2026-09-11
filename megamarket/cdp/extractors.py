@@ -41,6 +41,7 @@ class ExtractedCard:
     index: int
     title: str
     price: str
+    rating: str
     seller: str
     href: str
     image: str
@@ -57,6 +58,7 @@ class ExtractedCard:
             index=index,
             title=str(value.get("title") or ""),
             price=str(value.get("price") or ""),
+            rating=str(value.get("rating") or ""),
             seller=str(value.get("seller") or ""),
             href=str(value.get("href") or ""),
             image=str(value.get("image") or ""),
@@ -120,6 +122,7 @@ def build_cards_extractor_script(
         card_selector: str,
         title_selector: str,
         price_selector: str,
+        rating_selector: str,
         seller_selector: str,
         image_selector: str,
         offset: int = 0,
@@ -132,6 +135,7 @@ def build_cards_extractor_script(
         "__CARD_SELECTOR__": card_selector,
         "__TITLE_SELECTOR__": title_selector,
         "__PRICE_SELECTOR__": price_selector,
+        "__RATING_SELECTOR__": rating_selector,
         "__SELLER_SELECTOR__": seller_selector,
         "__IMAGE_SELECTOR__": image_selector,
     }
@@ -143,12 +147,14 @@ def build_cards_extractor_script(
     const items = cards.slice(offset).map((card, localIndex) => {
         const title = card.querySelector(__TITLE_SELECTOR__);
         const price = card.querySelector(__PRICE_SELECTOR__);
+        const rating = card.querySelector(__RATING_SELECTOR__);
         const seller = card.querySelector(__SELLER_SELECTOR__);
         const image = card.querySelector(__IMAGE_SELECTOR__);
         return {
             index: offset + localIndex,
             title: normalize(title ? title.textContent : ''),
             price: normalize(price ? price.textContent : ''),
+            rating: normalize(rating ? rating.textContent : ''),
             seller: normalize(seller ? seller.textContent : ''),
             href: title ? (title.getAttribute('href') || '') : '',
             image: image ? (image.getAttribute('content') || '') : '',

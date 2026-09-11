@@ -1,6 +1,9 @@
+import hashlib
 from enum import StrEnum
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+
+from megamarket.utils import normalize_link
 
 
 class Stock(StrEnum):
@@ -20,18 +23,74 @@ class SellerObservationState(StrEnum):
     UNKNOWN = "unknown"
 
 
+# Идентификатор считаем от ссылки на карточку — она однозначно определяет
+# товар у продавца, по ней же карточки и различаются при сборе. Шесть байт
+# отпечатка дают число до 2^48: столько Excel держит без потери точности
+# (у него ровно 2^53), а совпадение двух разных ссылок при таком размере —
+# событие, которого на любых мыслимых объёмах выдачи не случится.
+PRODUCT_ID_BYTES = 6
+
+
+def product_id_from_link(link: str) -> int:
+    """Числовой идентификатор карточки, устойчивый от запуска к запуску."""
+    if not link:
+        return 0
+    digest = hashlib.sha256(link.strip().encode("utf-8")).digest()
+    return int.from_bytes(digest[:PRODUCT_ID_BYTES], "big")
+
+
+def seller_id_from_link(link: str) -> str:
+    """Идентификатор продавца на маркетплейсе, зашитый в ссылку на карточку."""
+    if not link:
+        return ""
+    try:
+        return normalize_link(link)
+    except ValueError:
+        return ""
+
+
 class CardToPars(BaseModel):
-    title: str = Field(title="Название")
-    price: str = Field(title="Цена")
+    """Строка отчёта. Порядок полей задаёт порядок колонок в файле."""
+
+    card_link: str = Field(title="Ссылка")
+    title: str = Field(title="Название товара")
+    # Бренд в выдаче не размечен: колонка есть, значения в ней нет.
+    brand: str = Field(default="", title="Бренд")
+    product_id: int = Field(default=0, title="ID карточки")
+    # Описание живёт только внутри карточки товара, а заходить в неё нельзя.
+    description: str = Field(default="", title="Описание товара")
+    price: str = Field(title="Цены")
+    rating: str = Field(default="", title="Рейтинг")
     seller: str = Field(title="Продавец")
-    card_link: str = Field(title="Ссылка на карточку")
-    image_link: str = Field(default="", title="Ссылка на изображение")
-    stock: Stock = Field(default=Stock.OUT_OF_STOCK, title="Наличие")
     seller_link: str = Field(default="", title="Ссылка на продавца")
-    # Один отчёт может собираться по нескольким запросам сразу, и тогда только
-    # эта колонка говорит, откуда взялась строка. Поле необязательное: в старых
-    # отчётах колонки нет, и читать их это не мешает.
+    seller_id: str = Field(default="", title="ID продавца на маркетплейсе")
+    # Реквизиты продавца берутся из базы: в выдаче их нет, они появляются
+    # после проверки продавца. У непроверенных остаются пустыми.
+    official_name: str = Field(default="", title="Юр. Лицо")
+    legal_address: str = Field(default="", title="Юр. Адрес")
+    inn: str = Field(default="", title="ИНН продавца")
+    ogrn: str = Field(default="", title="ОГРН")
+    seller_phone: str = Field(default="", title="seller_phone")
+    seller_email: str = Field(default="", title="seller_email")
+    image_link: str = Field(default="", title="link")
+    # Служебные колонки идут после заданных: наличие и запрос, по которому
+    # строка попала в отчёт.
+    stock: Stock = Field(default=Stock.OUT_OF_STOCK, title="Наличие")
     query: str = Field(default="", title="Запрос")
+
+    @model_validator(mode="after")
+    def _fill_from_link(self):
+        """Достать из ссылки то, что в ней уже есть.
+
+        Карточка создаётся в нескольких местах — при разборе выдачи и при
+        чтении готового отчёта, — поэтому считаем здесь, чтобы значения не
+        зависели от того, каким путём карточка появилась.
+        """
+        if not self.product_id:
+            self.product_id = product_id_from_link(self.card_link)
+        if not self.seller_id:
+            self.seller_id = seller_id_from_link(self.card_link)
+        return self
 
 
 class SellerInfo(BaseModel):
