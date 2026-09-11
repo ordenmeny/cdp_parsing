@@ -7,6 +7,7 @@ from openpyxl import load_workbook
 
 from megamarket.domain import (
     CardToPars,
+    clean_price,
     product_id_from_link,
     seller_id_from_link,
 )
@@ -60,6 +61,25 @@ class ProductIdTests(unittest.TestCase):
         ]
         identifiers = {product_id_from_link(link) for link in links}
         self.assertEqual(len(identifiers), len(links))
+
+
+class CleanPriceTests(unittest.TestCase):
+    def test_ruble_sign_is_dropped(self):
+        self.assertEqual(clean_price("95 450 ₽"), "95 450")
+        self.assertEqual(clean_price("990₽"), "990")
+        self.assertEqual(clean_price("95 450 руб."), "95 450")
+
+    def test_rest_of_the_price_survives(self):
+        # У части карточек рядом с ценой стоит уточнение — терять его нельзя.
+        self.assertEqual(clean_price("1 990 ₽ за 2 шт"), "1 990 за 2 шт")
+        self.assertEqual(clean_price("от 95 450 ₽"), "от 95 450")
+
+    def test_price_without_a_sign_is_left_alone(self):
+        self.assertEqual(clean_price("2 500"), "2 500")
+        self.assertEqual(clean_price(""), "")
+
+    def test_card_price_is_cleaned_on_any_path(self):
+        self.assertEqual(make_card(price="95 450 ₽").price, "95 450")
 
 
 class CardFieldsTests(unittest.TestCase):

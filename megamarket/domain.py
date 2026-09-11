@@ -1,4 +1,5 @@
 import hashlib
+import re
 from enum import StrEnum
 
 from pydantic import BaseModel, Field, model_validator
@@ -37,6 +38,17 @@ def product_id_from_link(link: str) -> int:
         return 0
     digest = hashlib.sha256(link.strip().encode("utf-8")).digest()
     return int.from_bytes(digest[:PRODUCT_ID_BYTES], "big")
+
+
+# Значок валюты сайт рисует прямо в цене. Убираем только его, не трогая
+# остальной текст: у части карточек рядом стоит «/шт» или «за 2 шт», и терять
+# это вместе с рублём нельзя.
+CURRENCY_MARK = re.compile(r"₽|(?<![^\W\d_])руб\.?(?![^\W\d_])", re.IGNORECASE)
+
+
+def clean_price(value: str) -> str:
+    """Цена без значка рубля: в файле он мешает считать."""
+    return " ".join(CURRENCY_MARK.sub(" ", value).split())
 
 
 def seller_id_from_link(link: str) -> str:
@@ -79,8 +91,8 @@ class CardToPars(BaseModel):
     query: str = Field(default="", title="Запрос")
 
     @model_validator(mode="after")
-    def _fill_from_link(self):
-        """Достать из ссылки то, что в ней уже есть.
+    def _normalize(self):
+        """Досчитать то, что выводится из уже собранного.
 
         Карточка создаётся в нескольких местах — при разборе выдачи и при
         чтении готового отчёта, — поэтому считаем здесь, чтобы значения не
@@ -90,6 +102,7 @@ class CardToPars(BaseModel):
             self.product_id = product_id_from_link(self.card_link)
         if not self.seller_id:
             self.seller_id = seller_id_from_link(self.card_link)
+        self.price = clean_price(self.price)
         return self
 
 
