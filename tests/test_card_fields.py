@@ -119,7 +119,7 @@ class CardLinkNormalizationTests(unittest.TestCase):
         expected = (
             "https://megamarket.ru/catalog/details/"
             "sadovaya-samohodnaya-telezhka-greenworks-7400007-"
-            "100013264662_13635/"
+            "100013264662_13635"
         )
 
         self.assertEqual(normalize_card_link(source), expected)
@@ -137,7 +137,7 @@ class CardLinkNormalizationTests(unittest.TestCase):
             "ryukzak-triplus-dlya-muzhchin-dqs-6146-razmer-os-"
             "temno-siniy-100062171370/"
         )
-        expected = base.removesuffix("/") + "_13576/"
+        expected = base.removesuffix("/") + "_13576"
 
         for source in (
             base + "#?exclusiveMerchantId=13576",
@@ -148,6 +148,14 @@ class CardLinkNormalizationTests(unittest.TestCase):
                 card = make_card(card_link=source)
                 self.assertEqual(card.card_link, expected)
                 self.assertEqual(card.seller_id, "13576")
+
+    def test_removes_trailing_slash_from_already_normalized_link(self):
+        source = "https://megamarket.ru/catalog/details/tovar_13576/"
+
+        self.assertEqual(
+            normalize_card_link(source),
+            "https://megamarket.ru/catalog/details/tovar_13576",
+        )
 
     def test_keeps_fragment_when_no_seller_id_can_be_found(self):
         source = (

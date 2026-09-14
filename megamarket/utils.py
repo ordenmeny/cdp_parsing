@@ -112,23 +112,26 @@ def print_cards(cards: Sequence[BaseModel]) -> None:
 
 
 def normalize_card_link(link: str) -> str:
-    """Перенести ID продавца из fragment в путь и убрать fragment.
+    """Перенести ID продавца из fragment в путь и убрать fragment и слеш.
 
-    Если путь уже заканчивается на ``_<seller_id>``, его не меняем. Иначе
-    берём ID из ``exclusiveMerchantId`` и дописываем к пути. Без ID ни в пути,
-    ни во fragment ссылка остаётся исходной.
+    Если путь уже заканчивается на ``_<seller_id>``, оставляем его без
+    завершающего слеша. Иначе берём ID из ``exclusiveMerchantId`` и дописываем
+    к пути. Без ID ни в пути, ни во fragment ссылка остаётся исходной.
     """
     value = link.strip()
     parts = urlsplit(value)
-    if not parts.fragment:
-        return value
-
     path_parts = [unquote(part) for part in parts.path.split("/") if part]
     if not path_parts:
         return value
     _, separator, seller_id = path_parts[-1].rpartition("_")
     if separator and seller_id.isdecimal() and int(seller_id) > 0:
-        return urlunsplit(parts._replace(fragment=""))
+        return urlunsplit(parts._replace(
+            path=parts.path.rstrip("/"),
+            fragment="",
+        ))
+
+    if not parts.fragment:
+        return value
 
     params = parse_qs(parts.fragment.lstrip("#?"))
     values = params.get("exclusiveMerchantId")
@@ -138,8 +141,7 @@ def normalize_card_link(link: str) -> str:
     if not seller_id.isdecimal() or int(seller_id) < 1:
         return value
 
-    trailing_slash = "/" if parts.path.endswith("/") else ""
-    path = f"{parts.path.rstrip('/')}_{seller_id}{trailing_slash}"
+    path = f"{parts.path.rstrip('/')}_{seller_id}"
     return urlunsplit(parts._replace(path=path, fragment=""))
 
 
