@@ -131,17 +131,31 @@ class CardLinkNormalizationTests(unittest.TestCase):
             product_id_from_link(expected),
         )
 
-    def test_keeps_fragment_when_path_has_no_seller_id(self):
-        source = (
+    def test_moves_fragment_seller_id_to_path_when_suffix_is_missing(self):
+        base = (
             "https://megamarket.ru/catalog/details/"
             "ryukzak-triplus-dlya-muzhchin-dqs-6146-razmer-os-"
-            "temno-siniy-100062171370/#?exclusiveMerchantId=13576"
+            "temno-siniy-100062171370/"
+        )
+        expected = base.removesuffix("/") + "_13576/"
+
+        for source in (
+            base + "#?exclusiveMerchantId=13576",
+            base + "#?exclusiveMerchantId=13576/",
+        ):
+            with self.subTest(source=source):
+                self.assertEqual(normalize_card_link(source), expected)
+                card = make_card(card_link=source)
+                self.assertEqual(card.card_link, expected)
+                self.assertEqual(card.seller_id, "13576")
+
+    def test_keeps_fragment_when_no_seller_id_can_be_found(self):
+        source = (
+            "https://megamarket.ru/catalog/details/tovar/"
+            "#?related_search=test"
         )
 
         self.assertEqual(normalize_card_link(source), source)
-        card = make_card(card_link=source)
-        self.assertEqual(card.card_link, source)
-        self.assertEqual(card.seller_id, "13576")
 
 
 class ExtractedRatingTests(unittest.IsolatedAsyncioTestCase):
