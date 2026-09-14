@@ -17,6 +17,7 @@ from megamarket.storage.report import (
     ExcelReport,
     merge_excel_reports,
 )
+from megamarket.utils import normalize_card_link
 
 
 LINK = "https://megamarket.ru/catalog/details/smartfon-apple-100074688676_261094/"
@@ -105,6 +106,42 @@ class CardFieldsTests(unittest.TestCase):
         self.assertEqual(card.brand, "")
         self.assertEqual(card.rating, "")
         self.assertEqual(make_card(rating="4.9").rating, "4.9")
+
+
+class CardLinkNormalizationTests(unittest.TestCase):
+    def test_drops_fragment_when_seller_id_is_at_end_of_path(self):
+        source = (
+            "https://megamarket.ru/catalog/details/"
+            "sadovaya-samohodnaya-telezhka-greenworks-7400007-"
+            "100013264662_13635/#?related_search=greemworks&"
+            "exclusiveWarehouseId=260555&exclusiveMerchantId=13635"
+        )
+        expected = (
+            "https://megamarket.ru/catalog/details/"
+            "sadovaya-samohodnaya-telezhka-greenworks-7400007-"
+            "100013264662_13635/"
+        )
+
+        self.assertEqual(normalize_card_link(source), expected)
+        card = make_card(card_link=source)
+        self.assertEqual(card.card_link, expected)
+        self.assertEqual(card.product_id, product_id_from_link(expected))
+        self.assertEqual(
+            product_id_from_link(source),
+            product_id_from_link(expected),
+        )
+
+    def test_keeps_fragment_when_path_has_no_seller_id(self):
+        source = (
+            "https://megamarket.ru/catalog/details/"
+            "ryukzak-triplus-dlya-muzhchin-dqs-6146-razmer-os-"
+            "temno-siniy-100062171370/#?exclusiveMerchantId=13576"
+        )
+
+        self.assertEqual(normalize_card_link(source), source)
+        card = make_card(card_link=source)
+        self.assertEqual(card.card_link, source)
+        self.assertEqual(card.seller_id, "13576")
 
 
 class ExtractedRatingTests(unittest.IsolatedAsyncioTestCase):

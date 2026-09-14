@@ -4,7 +4,7 @@ from enum import StrEnum
 
 from pydantic import BaseModel, Field, model_validator
 
-from megamarket.utils import normalize_link
+from megamarket.utils import normalize_card_link, normalize_link
 
 
 class Stock(StrEnum):
@@ -36,7 +36,8 @@ def product_id_from_link(link: str) -> int:
     """Числовой идентификатор карточки, устойчивый от запуска к запуску."""
     if not link:
         return 0
-    digest = hashlib.sha256(link.strip().encode("utf-8")).digest()
+    normalized = normalize_card_link(link)
+    digest = hashlib.sha256(normalized.encode("utf-8")).digest()
     return int.from_bytes(digest[:PRODUCT_ID_BYTES], "big")
 
 
@@ -98,6 +99,7 @@ class CardToPars(BaseModel):
         чтении готового отчёта, — поэтому считаем здесь, чтобы значения не
         зависели от того, каким путём карточка появилась.
         """
+        self.card_link = normalize_card_link(self.card_link)
         if not self.product_id:
             self.product_id = product_id_from_link(self.card_link)
         if not self.seller_id:

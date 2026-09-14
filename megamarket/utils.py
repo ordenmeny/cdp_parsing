@@ -2,7 +2,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 import random
-from urllib.parse import parse_qs, unquote, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit, urlunsplit
 
 from pydantic import BaseModel
 
@@ -109,6 +109,28 @@ def print_cards(cards: Sequence[BaseModel]) -> None:
         print(f"{number}. {getattr(card, first)}")
         for name, field in rest:
             print(f"   {field.title or name}: {getattr(card, name) or '—'}")
+
+
+def normalize_card_link(link: str) -> str:
+    """Убрать fragment, когда ID продавца уже записан в пути карточки.
+
+    Если путь заканчивается на ``_<seller_id>``, fragment не нужен для
+    идентификации продавца и только делает одну карточку разными ссылками.
+    Когда такого суффикса нет, fragment сохраняем: ID продавца может быть
+    доступен только в ``exclusiveMerchantId``.
+    """
+    value = link.strip()
+    parts = urlsplit(value)
+    if not parts.fragment:
+        return value
+
+    path_parts = [unquote(part) for part in parts.path.split("/") if part]
+    if not path_parts:
+        return value
+    _, separator, seller_id = path_parts[-1].rpartition("_")
+    if not separator or not seller_id.isdecimal() or int(seller_id) < 1:
+        return value
+    return urlunsplit(parts._replace(fragment=""))
 
 
 def normalize_link(link: str) -> str:
