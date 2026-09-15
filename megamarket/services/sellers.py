@@ -278,10 +278,10 @@ class SellerJobService:
             if job.input_path and job.output_path:
                 report = ExcelCardsReport(Path(job.input_path))
                 try:
-                    await self._set_report_links(report)
+                    await self._set_report_seller_details(report)
                     report.save(
                         Path(job.output_path),
-                        replace_seller_links=True,
+                        replace_seller_details=True,
                     )
                 finally:
                     report.close()
@@ -337,13 +337,24 @@ class SellerJobService:
         ]
         return SellerService._seller_models(candidates)
 
-    async def _set_report_links(self, report: ExcelCardsReport) -> None:
+    async def _set_report_seller_details(
+            self,
+            report: ExcelCardsReport,
+    ) -> None:
         seller_ids = {normalize_link(card.card_link) for card in report.cards}
         sellers = await self.repository.get_by_ids(seller_ids)
         for card in report.cards:
             seller = sellers.get(normalize_link(card.card_link))
+            if seller is None:
+                card.seller_link = ""
+                continue
             card.seller_link = (
                 seller.link_to_seller
-                if seller is not None and seller.status is SellerStatus.CORRECT
+                if seller.status is SellerStatus.CORRECT
                 else ""
             )
+            card.official_name = seller.official_name
+            card.inn = seller.inn
+            card.ogrn = seller.ogrn
+            card.seller_phone = seller.phone
+            card.seller_email = seller.email

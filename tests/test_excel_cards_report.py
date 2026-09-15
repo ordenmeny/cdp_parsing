@@ -74,5 +74,53 @@ class ExcelCardsReportTests(unittest.TestCase):
             )
             self.assertIsNone(sheet.cell(row=4, column=seller_column).value)
 
+    def test_replaces_all_seller_details_from_database_values(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "report.xlsx"
+            card = self._cards()[0].model_copy(update={
+                "seller_link": "https://megamarket.ru/shop/old/",
+                "official_name": "Старое юрлицо",
+                "inn": "1111111111",
+                "ogrn": "1111111111111",
+                "seller_phone": "+7 111 111-11-11",
+                "seller_email": "old@example.com",
+            })
+            ExcelReport([card], model=CardToPars, query="test").save(source)
+
+            report = ExcelCardsReport(source)
+            updated = report.cards[0]
+            updated.seller_link = "https://megamarket.ru/shop/new/"
+            updated.official_name = "Новое юрлицо"
+            updated.inn = "2222222222"
+            updated.ogrn = "2222222222222"
+            updated.seller_phone = "+7 222 222-22-22"
+            updated.seller_email = ""
+            output = report.save(replace_seller_details=True)
+            report.close()
+
+            workbook = load_workbook(output)
+            try:
+                sheet = workbook[ExcelReport.SHEET_TITLE]
+                headers = {
+                    cell.value: cell.column
+                    for cell in sheet[1]
+                    if cell.value is not None
+                }
+                expected = {
+                    "Ссылка на продавца": "https://megamarket.ru/shop/new/",
+                    "Юр. Лицо": "Новое юрлицо",
+                    "ИНН продавца": "2222222222",
+                    "ОГРН": "2222222222222",
+                    "seller_phone": "+7 222 222-22-22",
+                    "seller_email": None,
+                }
+                for title, value in expected.items():
+                    self.assertEqual(
+                        sheet.cell(row=2, column=headers[title]).value,
+                        value,
+                    )
+            finally:
+                workbook.close()
+
 if __name__ == "__main__":
     unittest.main()

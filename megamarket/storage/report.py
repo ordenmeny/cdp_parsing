@@ -216,6 +216,15 @@ def join_excel_reports(directory: str | Path) -> Path:
 class ExcelCardsReport:
     """Существующий отчёт с привязкой объектов ``CardToPars`` к строкам."""
 
+    SELLER_DETAIL_FIELDS = (
+        "seller_link",
+        "official_name",
+        "inn",
+        "ogrn",
+        "seller_phone",
+        "seller_email",
+    )
+
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path).expanduser().resolve()
         if not self.path.is_file():
@@ -226,7 +235,10 @@ class ExcelCardsReport:
         self.workbook = load_workbook(self.path)
         self.sheet = self._get_cards_sheet()
         self._columns = self._read_columns()
-        self._seller_link_column = self._ensure_seller_link_column()
+        self._ensure_seller_detail_columns()
+        self._seller_link_column = self._columns[
+            self._field_title("seller_link")
+        ]
         self._rows: list[tuple[int, CardToPars, str]] = []
         self.cards = self._read_cards()
 
@@ -245,21 +257,21 @@ class ExcelCardsReport:
         field = CardToPars.model_fields[name]
         return field.title or name
 
-    def _ensure_seller_link_column(self) -> int:
-        title = self._field_title("seller_link")
-        existing = self._columns.get(title)
-        if existing is not None:
-            return existing
+    def _ensure_seller_detail_columns(self) -> None:
+        """Добавить в старый отчёт отсутствующие колонки данных продавца."""
+        for name in self.SELLER_DETAIL_FIELDS:
+            title = self._field_title(name)
+            if title in self._columns:
+                continue
 
-        column = self.sheet.max_column + 1
-        cell = self.sheet.cell(row=1, column=column, value=title)
-        if column > 1:
-            previous = self.sheet.cell(row=1, column=column - 1)
-            cell._style = copy(previous._style)
-        else:
-            cell.font = Font(bold=True)
-        self._columns[title] = column
-        return column
+            column = self.sheet.max_column + 1
+            cell = self.sheet.cell(row=1, column=column, value=title)
+            if column > 1:
+                previous = self.sheet.cell(row=1, column=column - 1)
+                cell._style = copy(previous._style)
+            else:
+                cell.font = Font(bold=True)
+            self._columns[title] = column
 
     def _required_columns(self) -> dict[str, int]:
         """Найти доступные колонки и проверить обязательные поля модели.
@@ -298,9 +310,16 @@ class ExcelCardsReport:
                 continue
 
             data = {
-                name: value
+                name: (
+                    ""
+                    if value is None and CardToPars.model_fields[name].is_required()
+                    else value
+                )
                 for name, value in values.items()
-                if value not in (None, "")
+                if (
+                    value not in (None, "")
+                    or CardToPars.model_fields[name].is_required()
+                )
             }
             data["seller_link"] = (
                     self.sheet.cell(
@@ -331,19 +350,26 @@ class ExcelCardsReport:
             path: str | Path | None = None,
             *,
             replace_seller_links: bool = False,
+            replace_seller_details: bool = False,
     ) -> Path:
-        """Сохранить отчёт, при необходимости заменив все ссылки продавцов."""
+        """Сохранить отчёт, при необходимости обновив данные продавцов."""
         target = Path(path).expanduser().resolve() if path else self.output_path
         target.parent.mkdir(parents=True, exist_ok=True)
 
         for row_number, card, original_link in self._rows:
+            if replace_seller_details:
+                for name in self.SELLER_DETAIL_FIELDS:
+                    self.sheet.cell(
+                        row=row_number,
+                        column=self._columns[self._field_title(name)],
+                    ).value = getattr(card, name) or None
+                continue
             if not replace_seller_links and (original_link or not card.seller_link):
                 continue
             self.sheet.cell(
                 row=row_number,
                 column=self._seller_link_column,
-                value=card.seller_link or None,
-            )
+            ).value = card.seller_link or None
 
         self.workbook.save(target)
         print(f"Отчёт со ссылками сохранён: {target} (строк: {len(self.cards)})")

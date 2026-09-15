@@ -9,7 +9,7 @@ from megamarket.cdp.browser_endpoint import (
     resolve_browser_endpoint,
     rewrite_websocket_host,
 )
-from megamarket.domain import SellerObservationState, SellerStatus
+from megamarket.domain import CardToPars, SellerObservationState, SellerStatus
 from megamarket.parsers.seller_page import SellerPageResult, SellerPageState
 from megamarket.schemas.seller_jobs import (
     SellerCandidate,
@@ -175,6 +175,47 @@ class SellerSelectionRequestTests(unittest.TestCase):
 
 
 class SellerJobServiceTests(unittest.IsolatedAsyncioTestCase):
+    async def test_sets_all_report_seller_details_from_database(self):
+        correct = Sellers(
+            seller_id="147929",
+            name="Магазин",
+            link_to_seller="https://megamarket.ru/shop/current/",
+            link_to_card="https://megamarket.ru/card_147929/",
+            status=SellerStatus.CORRECT,
+            email="current@example.com",
+            ogrn="2222222222222",
+            official_name="Актуальное юрлицо",
+            inn="2222222222",
+            phone="+7 222 222-22-22",
+        )
+        card = CardToPars(
+            title="Товар",
+            price="100",
+            seller="Магазин",
+            card_link=(
+                "https://megamarket.ru/catalog/details/"
+                "product-100000000001_147929/"
+            ),
+            seller_link="https://megamarket.ru/shop/old/",
+            official_name="Старое юрлицо",
+            inn="1111111111",
+            ogrn="1111111111111",
+            seller_phone="+7 111 111-11-11",
+            seller_email="old@example.com",
+        )
+        report = MagicMock(cards=[card])
+        repository = MagicMock()
+        repository.get_by_ids = AsyncMock(return_value={correct.seller_id: correct})
+
+        await SellerJobService(repository)._set_report_seller_details(report)
+
+        self.assertEqual(card.seller_link, correct.link_to_seller)
+        self.assertEqual(card.official_name, correct.official_name)
+        self.assertEqual(card.inn, correct.inn)
+        self.assertEqual(card.ogrn, correct.ogrn)
+        self.assertEqual(card.seller_phone, correct.phone)
+        self.assertEqual(card.seller_email, correct.email)
+
     async def test_creates_job_for_exact_selected_sellers(self):
         first = Sellers(
             seller_id="20",
