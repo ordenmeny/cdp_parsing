@@ -66,6 +66,33 @@ class MergeReportsTests(unittest.TestCase):
                 ],
             )
 
+    def test_old_and_new_legal_name_headers_are_one_column(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            # До переноса заголовок юрлица писался в одну строку, после — в две.
+            old = make_report(
+                root / "old.xlsx",
+                ["Название", "Юр. Лицо"],
+                [["Дрель", "ООО Кувалда"]],
+            )
+            new = make_report(
+                root / "new.xlsx",
+                ["Название", "Юр.\nЛицо"],
+                [["iPhone", "ООО Сотомаркет"]],
+            )
+            target = root / "joined.xlsx"
+
+            merge_excel_reports([old, new], target)
+
+            self.assertEqual(
+                read_rows(target),
+                [
+                    ("Название", "Юр.\nЛицо"),
+                    ("Дрель", "ООО Кувалда"),
+                    ("iPhone", "ООО Сотомаркет"),
+                ],
+            )
+
     def test_repeated_rows_are_kept(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

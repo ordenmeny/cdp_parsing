@@ -108,7 +108,7 @@ class ExcelCardsReportTests(unittest.TestCase):
                 }
                 expected = {
                     "Ссылка на продавца": "https://megamarket.ru/shop/new/",
-                    "Юр. Лицо": "Новое юрлицо",
+                    "Юр.\nЛицо": "Новое юрлицо",
                     "ИНН продавца": "2222222222",
                     "ОГРН": "2222222222222",
                     "seller_phone": "+7 222 222-22-22",
@@ -119,6 +119,42 @@ class ExcelCardsReportTests(unittest.TestCase):
                         sheet.cell(row=2, column=headers[title]).value,
                         value,
                     )
+            finally:
+                workbook.close()
+
+    def test_old_legal_name_header_is_reused_and_rewritten(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "report.xlsx"
+            ExcelReport(self._cards()[:1], model=CardToPars, query="test").save(
+                source
+            )
+            # Отчёт, снятый до переноса: заголовок юрлица в одну строку.
+            workbook = load_workbook(source)
+            sheet = workbook[ExcelReport.SHEET_TITLE]
+            for cell in sheet[1]:
+                if cell.value == "Юр.\nЛицо":
+                    cell.value = "Юр. Лицо"
+            workbook.save(source)
+            workbook.close()
+
+            report = ExcelCardsReport(source)
+            report.cards[0].official_name = "Новое юрлицо"
+            output = report.save(replace_seller_details=True)
+            report.close()
+
+            workbook = load_workbook(output)
+            try:
+                sheet = workbook[ExcelReport.SHEET_TITLE]
+                headers = [cell.value for cell in sheet[1]]
+                self.assertNotIn("Юр. Лицо", headers)
+                # Колонка та же, а не дописанная в конец вторая.
+                self.assertEqual(headers.count("Юр.\nЛицо"), 1)
+                column = headers.index("Юр.\nЛицо") + 1
+                self.assertTrue(sheet.cell(row=1, column=column).alignment.wrap_text)
+                self.assertEqual(
+                    sheet.cell(row=2, column=column).value,
+                    "Новое юрлицо",
+                )
             finally:
                 workbook.close()
 

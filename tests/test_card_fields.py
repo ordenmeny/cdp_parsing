@@ -215,7 +215,7 @@ EXPECTED_COLUMNS = [
     "Продавец",
     "Ссылка на продавца",
     "ID продавца на маркетплейсе",
-    "Юр. Лицо",
+    "Юр.\nЛицо",
     "Юр. Адрес",
     "ИНН продавца",
     "ОГРН",
@@ -250,6 +250,19 @@ class ReportColumnsTests(unittest.TestCase):
             self.assertEqual(headers[:len(EXPECTED_COLUMNS)], EXPECTED_COLUMNS)
             # Служебные колонки идут следом и порядок заданных не сдвигают.
             self.assertEqual(headers[len(EXPECTED_COLUMNS):], ["Наличие", "Запрос"])
+
+    def test_legal_name_header_wraps_onto_two_lines(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = ExcelReport(
+                [make_card()],
+                model=CardToPars,
+                query="iphone 17",
+            ).save(Path(directory) / "report.xlsx")
+
+            sheet = sheet_of(path)
+            cell = sheet.cell(row=1, column=column_of(sheet, "Юр.\nЛицо"))
+            # Без переноса у клетки Excel показал бы заголовок одной строкой.
+            self.assertTrue(cell.alignment.wrap_text)
 
     def test_id_is_written_as_text_and_read_back(self):
         card = make_card(rating="4.9")

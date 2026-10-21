@@ -108,7 +108,8 @@ def print_cards(cards: Sequence[BaseModel]) -> None:
         (first, _), *rest = type(card).model_fields.items()
         print(f"{number}. {getattr(card, first)}")
         for name, field in rest:
-            print(f"   {field.title or name}: {getattr(card, name) or '—'}")
+            title = normalize_text(field.title or name)
+            print(f"   {title}: {getattr(card, name) or '—'}")
 
 
 def normalize_card_link(link: str) -> str:

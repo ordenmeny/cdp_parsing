@@ -6,12 +6,41 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from openpyxl import Workbook, load_workbook
-from openpyxl.styles import Font
+from openpyxl.styles import Alignment, Font
 from openpyxl.utils import get_column_letter
 from pydantic import BaseModel
 
 from megamarket.config import settings
 from megamarket.domain import CardToPars
+from megamarket.utils import normalize_text
+
+
+def header_key(value) -> str:
+    """Заголовок для сопоставления колонок: переносы и пробелы не различаем.
+
+    Иначе «Юр. Лицо» из старых отчётов и «Юр.\\nЛицо» из новых считались бы
+    разными колонками.
+    """
+    return normalize_text(str(value or ""))
+
+
+# Заголовки наших колонок в нынешнем виде: объединение старых отчётов с новыми
+# пишет колонку так, как её назвал бы свежий отчёт.
+CURRENT_HEADERS = {
+    header_key(field.title or name): field.title or name
+    for name, field in CardToPars.model_fields.items()
+}
+
+
+def text_width(value) -> int:
+    """Ширина текста в знаках: у многострочного — по самой длинной строке."""
+    return max(len(line) for line in str(value or "").split("\n"))
+
+
+def style_header(cell) -> None:
+    cell.font = Font(bold=True)
+    # Перенос строки в клетке Excel показывает, только если он включён.
+    cell.alignment = Alignment(wrap_text=True)
 
 
 class ExcelReport:
@@ -73,7 +102,7 @@ class ExcelReport:
         for number, (name, column) in enumerate(columns.items(), start=1):
             cell = sheet.cell(row=1, column=number)
             cell.value = column.title or name
-            cell.font = Font(bold=True)
+            style_header(cell)
 
         for row, item in enumerate(self.rows, start=2):
             for number, name in enumerate(columns, start=1):
@@ -82,7 +111,7 @@ class ExcelReport:
 
         for number in range(1, len(columns) + 1):
             letter = get_column_letter(number)
-            longest = max(len(str(cell.value or "")) for cell in sheet[letter])
+            longest = max(text_width(cell.value) for cell in sheet[letter])
             sheet.column_dimensions[letter].width = min(longest + 2, self.MAX_WIDTH)
 
         sheet.freeze_panes = "A2"
@@ -119,7 +148,8 @@ def joined_report_filename() -> str:
 def merge_excel_reports(sources: Sequence[Path], target: Path) -> int:
     """Сложить строки нескольких отчётов в один файл; вернуть число строк.
 
-    Колонки сопоставляются по названию, а не по номеру: в одно объединение
+    Колонки сопоставляются по названию, а не по номеру, причём переносы
+    и пробелы в названии не в счёт: в одно объединение
     попадают и отчёты, снятые до появления новой колонки, — недостающие клетки
     остаются пустыми. Строки на повторы не проверяются: объединение должно быть
     быстрым, а что считать дублем, зависит от задачи.
@@ -128,9 +158,10 @@ def merge_excel_reports(sources: Sequence[Path], target: Path) -> int:
     positions: dict[str, int] = {}
     for path in sources:
         for header in read_headers(path):
-            if header and header not in positions:
-                positions[header] = len(columns)
-                columns.append(header)
+            key = header_key(header)
+            if key and key not in positions:
+                positions[key] = len(columns)
+                columns.append(CURRENT_HEADERS.get(key, header))
     if not columns:
         raise ValueError("В выбранных файлах отсутствуют заголовки таблицы.")
 
@@ -140,7 +171,7 @@ def merge_excel_reports(sources: Sequence[Path], target: Path) -> int:
     sheet.append(columns)
     # Ширины набираем по ходу записи: отдельный проход по готовому листу стоил
     # бы столько же, сколько само объединение.
-    widths = [len(header) for header in columns]
+    widths = [text_width(header) for header in columns]
     written = 0
 
     for path in sources:
@@ -150,7 +181,7 @@ def merge_excel_reports(sources: Sequence[Path], target: Path) -> int:
             headers = [str(value or "") for value in next(rows, ())]
             if not any(headers):
                 continue
-            places = [positions.get(header) for header in headers]
+            places = [positions.get(header_key(header)) for header in headers]
             for values in rows:
                 if not any(value not in (None, "") for value in values):
                     continue
@@ -167,7 +198,7 @@ def merge_excel_reports(sources: Sequence[Path], target: Path) -> int:
 
     for number, width in enumerate(widths, start=1):
         cell = sheet.cell(row=1, column=number)
-        cell.font = Font(bold=True)
+        style_header(cell)
         sheet.column_dimensions[get_column_letter(number)].width = min(
             width + 2,
             ExcelReport.MAX_WIDTH,
@@ -236,9 +267,7 @@ class ExcelCardsReport:
         self.sheet = self._get_cards_sheet()
         self._columns = self._read_columns()
         self._ensure_seller_detail_columns()
-        self._seller_link_column = self._columns[
-            self._field_title("seller_link")
-        ]
+        self._seller_link_column = self._column("seller_link")
         self._rows: list[tuple[int, CardToPars, str]] = []
         self.cards = self._read_cards()
 
@@ -249,7 +278,7 @@ class ExcelCardsReport:
         columns: dict[str, int] = {}
         for cell in self.sheet[1]:
             if cell.value is not None:
-                columns[str(cell.value).strip()] = cell.column
+                columns[header_key(cell.value)] = cell.column
         return columns
 
     @staticmethod
@@ -257,11 +286,24 @@ class ExcelCardsReport:
         field = CardToPars.model_fields[name]
         return field.title or name
 
+    def _column(self, name: str) -> int | None:
+        """Номер колонки поля; заголовок может быть записан по-старому."""
+        return self._columns.get(header_key(self._field_title(name)))
+
     def _ensure_seller_detail_columns(self) -> None:
-        """Добавить в старый отчёт отсутствующие колонки данных продавца."""
+        """Привести колонки данных продавца в старом отчёте к нынешним.
+
+        Недостающие дописываются в конец, а заголовки существующих
+        переписываются в нынешнем виде: «Юр. Лицо» становится «Юр.\\nЛицо».
+        """
         for name in self.SELLER_DETAIL_FIELDS:
             title = self._field_title(name)
-            if title in self._columns:
+            column = self._column(name)
+            if column is not None:
+                cell = self.sheet.cell(row=1, column=column)
+                if cell.value != title:
+                    cell.value = title
+                    cell.alignment = Alignment(wrap_text=True)
                 continue
 
             column = self.sheet.max_column + 1
@@ -269,9 +311,10 @@ class ExcelCardsReport:
             if column > 1:
                 previous = self.sheet.cell(row=1, column=column - 1)
                 cell._style = copy(previous._style)
+                cell.alignment = Alignment(wrap_text=True)
             else:
-                cell.font = Font(bold=True)
-            self._columns[title] = column
+                style_header(cell)
+            self._columns[header_key(title)] = column
 
     def _required_columns(self) -> dict[str, int]:
         """Найти доступные колонки и проверить обязательные поля модели.
@@ -285,11 +328,10 @@ class ExcelCardsReport:
         for name, field in CardToPars.model_fields.items():
             if name == "seller_link":
                 continue
-            title = self._field_title(name)
-            column = self._columns.get(title)
+            column = self._column(name)
             if column is None:
                 if field.is_required():
-                    missing.append(title)
+                    missing.append(header_key(self._field_title(name)))
             else:
                 result[name] = column
         if missing:
@@ -361,7 +403,7 @@ class ExcelCardsReport:
                 for name in self.SELLER_DETAIL_FIELDS:
                     self.sheet.cell(
                         row=row_number,
-                        column=self._columns[self._field_title(name)],
+                        column=self._column(name),
                     ).value = getattr(card, name) or None
                 continue
             if not replace_seller_links and (original_link or not card.seller_link):

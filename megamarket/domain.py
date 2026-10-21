@@ -79,7 +79,8 @@ class CardToPars(BaseModel):
     seller_id: str = Field(default="", title="ID продавца на маркетплейсе")
     # Реквизиты продавца берутся из базы: в выдаче их нет, они появляются
     # после проверки продавца. У непроверенных остаются пустыми.
-    official_name: str = Field(default="", title="Юр. Лицо")
+    # Заголовок юрлица — в две строки: так его просили видеть в файле.
+    official_name: str = Field(default="", title="Юр.\nЛицо")
     legal_address: str = Field(default="", title="Юр. Адрес")
     inn: str = Field(default="", title="ИНН продавца")
     ogrn: str = Field(default="", title="ОГРН")
